@@ -1,44 +1,82 @@
-import { Tabs } from 'expo-router';
+// app/(tabs)/_layout.tsx
+
+import { Ionicons } from '@expo/vector-icons';
+import { Tabs, useRouter } from 'expo-router';
 import React from 'react';
-import { Platform } from 'react-native';
 
-import { HapticTab } from '@/components/HapticTab';
-import { IconSymbol } from '@/components/ui/IconSymbol';
-import TabBarBackground from '@/components/ui/TabBarBackground';
-import { Colors } from '@/constants/Colors';
-import { useColorScheme } from '@/hooks/useColorScheme';
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function TabsLayout() {
+  const router = useRouter();
 
   return (
     <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+      screenOptions={({
+        route,
+      }: {
+        route: { name: string };
+      }) => ({
         headerShown: false,
-        tabBarButton: HapticTab,
-        tabBarBackground: TabBarBackground,
-        tabBarStyle: Platform.select({
-          ios: {
-            // Use a transparent background on iOS to show the blur effect
-            position: 'absolute',
-          },
-          default: {},
-        }),
-      }}>
+        // dark background theme with increased height
+        tabBarStyle: {
+          backgroundColor: '#121212',
+          borderTopWidth: 1,
+          borderTopColor: '#222222',
+          height: 70,         // increased from 60 to 70
+          paddingBottom: 10,  // added extra bottom padding
+          elevation: 4,
+        },
+        tabBarShowLabel: false,
+        // bright accent on dark background
+        tabBarActiveTintColor: '#1E90FF',
+        tabBarInactiveTintColor: '#888888',
+        tabBarIcon: ({
+          color,
+          size,
+        }: {
+          color: string;
+          size: number;
+        }) => {
+          let iconName: React.ComponentProps<typeof Ionicons>['name'] = 'ellipse';
+          if (route.name === 'index') {
+            iconName = 'list-outline';
+          } else if (route.name === 'calendar') {
+            iconName = 'calendar-outline';
+          } else if (route.name === 'explore/index') {
+            iconName = 'search-outline';
+          } else if (route.name === 'interests') {
+            iconName = 'heart-outline';
+          }
+          return <Ionicons name={iconName} size={size} color={color} />;
+        },
+      })}
+    >
+      {/* What’s On tab (default route) */}
       <Tabs.Screen
         name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+        options={{ title: "What's On" }}
+        listeners={{
+          tabPress: (e: { preventDefault: () => void }) => {
+            e.preventDefault();
+            router.push('/');
+          },
         }}
       />
+
+      {/* Calendar tab */}
       <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
-        }}
+        name="calendar"
+        options={{ title: 'Calendar' }}
+      />
+
+      {/* Explore tab */}
+      <Tabs.Screen
+        name="explore/index"
+        options={{ title: 'Explore' }}
+      />
+
+      {/* Interests tab */}
+      <Tabs.Screen
+        name="interests"
+        options={{ title: 'Interests' }}
       />
     </Tabs>
   );
