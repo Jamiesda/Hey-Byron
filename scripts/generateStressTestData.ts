@@ -1,224 +1,270 @@
-// scripts/generateStressTestData.ts
-// Run this to flood your app with test data for stress testing
+// scripts/generateStressTestData.ts - UPDATED with 50% Videos
+// @ts-nocheck
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Business } from '../data/businesses';
 import { Event } from '../data/events';
 
-// Business name generators
-const businessTypes = [
-  { type: 'Cafe', names: ['Byron', 'Beach', 'Sunrise', 'Coastal', 'Pacific', 'Lighthouse', 'Karma', 'Elements'] },
-  { type: 'Restaurant', names: ['The Bay', 'Fishheads', 'Bayleaf', 'Salt', 'Pier', 'Dunes', 'Twisted Sista'] },
-  { type: 'Yoga Studio', names: ['Byron', 'Zen', 'Flow', 'Sacred', 'Divine', 'Lotus', 'Mindful', 'Peaceful'] },
-  { type: 'Gallery', names: ['Byron', 'Arts', 'Creative', 'Local', 'Coastal', 'Contemporary', 'Regional'] },
-  { type: 'Brewery', names: ['Byron Bay', 'Stone & Wood', 'Pacific', 'Lighthouse', 'Coastal', 'Hinterland'] },
-  { type: 'Boutique', names: ['Byron', 'Bohemian', 'Spell', 'Arnhem', 'Island', 'Coastal', 'Natural'] },
-  { type: 'Surf Shop', names: ['Byron', 'DHD', 'Simon Anderson', 'Wategos', 'The Pass', 'Clarkes Beach'] },
-  { type: 'Wellness Center', names: ['Byron', 'Healing', 'Natural', 'Wholistic', 'Elements', 'Sacred'] }
+// Sample video URLs with mixed orientations
+const SAMPLE_VIDEOS = {
+  landscape: [
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
+  ],
+  portrait: [
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatCarCanYouGetForAGrand.mp4',
+    // Adding some realistic mobile/portrait style video URLs
+    'https://sample-videos.com/zip/10/mp4/SampleVideo_360x640_1mb.mp4',
+    'https://sample-videos.com/zip/10/mp4/SampleVideo_480x854_2mb.mp4'
+  ]
+};
+
+// Sample images for non-video events
+const SAMPLE_IMAGES = [
+  'https://picsum.photos/800/600?random=1',
+  'https://picsum.photos/800/600?random=2',
+  'https://picsum.photos/600/800?random=3', // Portrait
+  'https://picsum.photos/800/600?random=4',
+  'https://picsum.photos/600/800?random=5', // Portrait
+  'https://picsum.photos/800/600?random=6',
+  'https://picsum.photos/1200/800?random=7',
+  'https://picsum.photos/800/1200?random=8', // Portrait
+  'https://picsum.photos/800/600?random=9',
+  'https://picsum.photos/600/800?random=10' // Portrait
 ];
 
-const addresses = [
-  'Jonson Street, Byron Bay NSW 2481',
-  'Bay Street, Byron Bay NSW 2481',  
-  'Fletcher Street, Byron Bay NSW 2481',
-  'Lawson Street, Byron Bay NSW 2481',
-  'Marvel Street, Byron Bay NSW 2481',
-  'Butler Street, Byron Bay NSW 2481',
-  'Bangalow Road, Byron Bay NSW 2481',
-  'Ewingsdale Road, Byron Bay NSW 2481',
-  'Arts & Industry Estate, Byron Bay NSW 2481',
-  'The Plaza, 90 Jonson Street, Byron Bay NSW 2481'
+const BYRON_BAY_BUSINESSES = [
+  {
+    name: 'Byron Bay Yoga Studio',
+    tags: ['Yoga/Pilates', 'Wellness', 'Fitness'],
+    eventTypes: ['Sunrise Yoga', 'Meditation Session', 'Pilates Class', 'Wellness Workshop']
+  },
+  {
+    name: 'The Beach House Cafe',
+    tags: ['Food', 'Food & Drink Specials', 'Beer, Wine & Spirits'],
+    eventTypes: ['Live Music Brunch', 'Wine Tasting', 'Barista Workshop', 'Sunset Dinner']
+  },
+  {
+    name: 'Nimbin Electronic Collective',
+    tags: ['Electronic Music', 'Live Music', 'Art'],
+    eventTypes: ['Electronic Night', 'DJ Workshop', 'Sound Healing', 'Ambient Sessions']
+  },
+  {
+    name: 'Byron Arts & Culture',
+    tags: ['Art', 'Cultural Events', 'Workshops'],
+    eventTypes: ['Art Exhibition', 'Pottery Class', 'Cultural Talk', 'Artist Showcase']
+  },
+  {
+    name: 'Main Beach Surf School',
+    tags: ['Surfing', 'Outdoor activities', 'Fitness'],
+    eventTypes: ['Surf Lesson', 'Beach Cleanup', 'Surf Competition', 'Ocean Safety Course']
+  },
+  {
+    name: 'The Comedy Cave',
+    tags: ['Comedy', 'Live Music', 'Community Events'],
+    eventTypes: ['Stand-up Night', 'Open Mic', 'Comedy Workshop', 'Improv Class']
+  },
+  {
+    name: 'Byron Bay Markets',
+    tags: ['Markets', 'Food', 'Community Events'],
+    eventTypes: ['Farmers Market', 'Artisan Fair', 'Food Festival', 'Craft Workshop']
+  },
+  {
+    name: 'Lighthouse Cinema',
+    tags: ['Films', 'Cultural Events', 'Community Events'],
+    eventTypes: ['Film Screening', 'Documentary Night', 'Film Discussion', 'Movie Marathon']
+  },
+  {
+    name: 'The Wellness Retreat',
+    tags: ['Wellness', 'Yoga/Pilates', 'Workshops'],
+    eventTypes: ['Meditation Retreat', 'Breathwork Session', 'Healing Circle', 'Mindfulness Workshop']
+  },
+  {
+    name: 'Byron Bay Brewery',
+    tags: ['Beer, Wine & Spirits', 'Live Music', 'Food'],
+    eventTypes: ['Beer Tasting', 'Brewery Tour', 'Live Music Night', 'Trivia Night']
+  }
 ];
 
-const eventTitles = [
-  'Live Music Night',
-  'Morning Yoga Session',
-  'Art Exhibition Opening',
-  'Wine Tasting Evening',
-  'Local Markets',
-  'Beach Cleanup',
-  'Comedy Night',
-  'Trivia Tuesday',
-  'Open Mic Night',
-  'Sunset Session',
-  'Film Screening',
-  'Workshop Session',
-  'Community Event',
-  'Fundraiser Night',
-  'Cultural Festival',
-  'Food & Wine Festival',
-  'Wellness Workshop',
-  'Surf Competition',
-  'Music Festival',
-  'Craft Workshop'
-];
+const generateRandomAddress = () => {
+  const streets = ['Jonson St', 'Bay St', 'Butler St', 'Fletcher St', 'Marvel St', 'Bangalow Rd', 'Ewingsdale Rd'];
+  const numbers = Math.floor(Math.random() * 200) + 1;
+  return `${numbers} ${streets[Math.floor(Math.random() * streets.length)]}, Byron Bay NSW 2481`;
+};
 
-const tags = [
-  'Live Music', 'Art', 'Electronic Music', 'Open Mic Nights', 'Comedy', 'Trivia', 'Films',
-  'Yoga/Pilates', 'Wellness', 'Fitness', 'Outdoor activities', 'Surfing', 'Markets',
-  'Beer, Wine & Spirits', 'Food & Drink Specials', 'Food', 'Workshops', 'Community Events',
-  'Fundraisers', 'Cultural Events'
-];
+const generateRandomDescription = (businessName: string) => {
+  const descriptions = [
+    `Welcome to ${businessName}, where magic happens every day in beautiful Byron Bay.`,
+    `${businessName} has been serving the Byron Bay community with passion and dedication.`,
+    `Experience the best of Byron Bay at ${businessName}. Join us for unforgettable moments.`,
+    `${businessName} brings together community, creativity, and the Byron Bay spirit.`,
+    `Discover something special at ${businessName}, your local Byron Bay destination.`
+  ];
+  return descriptions[Math.floor(Math.random() * descriptions.length)];
+};
 
-// Sample image URLs (placeholder services)
-const imageUrls = [
-  'https://picsum.photos/400/300?random=1',
-  'https://picsum.photos/400/300?random=2',
-  'https://picsum.photos/400/300?random=3',
-  'https://picsum.photos/400/300?random=4',
-  'https://picsum.photos/400/300?random=5',
-  'https://picsum.photos/400/300?random=6',
-  'https://picsum.photos/400/300?random=7',
-  'https://picsum.photos/400/300?random=8',
-  'https://picsum.photos/400/300?random=9',
-  'https://picsum.photos/400/300?random=10'
-];
-
-// Sample video URLs (public test videos)
-const videoUrls = [
-  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4'
-];
-
-function getRandomItem<T>(array: T[]): T {
+const getRandomElement = <T>(array: T[]): T => {
   return array[Math.floor(Math.random() * array.length)];
-}
+};
 
-function getRandomItems<T>(array: T[], count: number): T[] {
-  const shuffled = array.sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, count);
-}
-
-function generateBusinessName(): string {
-  const businessType = getRandomItem(businessTypes);
-  const name = getRandomItem(businessType.names);
-  return `${name} ${businessType.type}`;
-}
-
-function generateBusiness(id: string): Business {
-  const businessTags = getRandomItems(tags, Math.floor(Math.random() * 4) + 1);
-  
-  return {
-    id,
-    name: generateBusinessName(),
-    address: getRandomItem(addresses),
-    description: `A wonderful ${businessTags.join(' and ').toLowerCase()} venue in the heart of Byron Bay. Experience the best of what our town has to offer with friendly service and a great atmosphere.`,
-    website: Math.random() > 0.3 ? `https://${generateBusinessName().toLowerCase().replace(/\s+/g, '')}.com.au` : undefined,
-    tags: businessTags,
-    socialLinks: Math.random() > 0.4 ? [
-      `https://instagram.com/${generateBusinessName().toLowerCase().replace(/\s+/g, '')}`,
-      ...(Math.random() > 0.5 ? [`https://facebook.com/${generateBusinessName().toLowerCase().replace(/\s+/g, '')}`] : [])
-    ] : undefined,
-    image: Math.random() > 0.2 ? getRandomItem(imageUrls) : undefined
-  };
-}
-
-function generateEvent(businessId: string, eventId: string): Event {
-  const eventTags = getRandomItems(tags, Math.floor(Math.random() * 3) + 1);
-  
-  // Generate random date in next 3 months
+const getRandomDate = () => {
   const now = new Date();
-  const futureDate = new Date(now.getTime() + Math.random() * 90 * 24 * 60 * 60 * 1000);
-  
-  // Random hour between 8 AM and 11 PM
-  futureDate.setHours(Math.floor(Math.random() * 15) + 8);
-  futureDate.setMinutes(Math.random() > 0.5 ? 0 : 30);
-  
-  const hasMedia = Math.random() > 0.3;
-  const isVideo = hasMedia && Math.random() > 0.6; // 40% of media is video
-  
-  return {
-    id: eventId,
-    businessId,
-    title: getRandomItem(eventTitles),
-    date: futureDate.toISOString(),
-    link: Math.random() > 0.4 ? `https://eventbrite.com/event-${eventId}` : undefined,
-    tags: eventTags,
-    image: hasMedia && !isVideo ? getRandomItem(imageUrls) : undefined,
-    video: hasMedia && isVideo ? getRandomItem(videoUrls) : undefined
-  };
-}
+  const futureDate = new Date(now.getTime() + Math.random() * 30 * 24 * 60 * 60 * 1000); // Next 30 days
+  return futureDate.toISOString();
+};
 
-export async function generateStressTestData() {
-  console.log('🚀 Generating stress test data...');
+const getRandomMedia = (isVideo: boolean) => {
+  if (isVideo) {
+    // 60% landscape, 40% portrait for more realistic mix
+    const usePortrait = Math.random() < 0.4;
+    const videoArray = usePortrait ? SAMPLE_VIDEOS.portrait : SAMPLE_VIDEOS.landscape;
+    return {
+      video: getRandomElement(videoArray),
+      image: undefined
+    };
+  } else {
+    return {
+      video: undefined,
+      image: getRandomElement(SAMPLE_IMAGES)
+    };
+  }
+};
+
+const generateEventCaption = (eventType: string, businessName: string) => {
+  const captions = [
+    `Join us for an amazing ${eventType} experience at ${businessName}! Don't miss out on this incredible opportunity to connect with the Byron Bay community.`,
+    `${businessName} presents ${eventType} - a unique experience that captures the essence of Byron Bay. Book now to secure your spot!`,
+    `Experience the magic of ${eventType} in the heart of Byron Bay. ${businessName} welcomes you to this special event.`,
+    `Get ready for ${eventType} at ${businessName}! This is going to be an unforgettable experience in beautiful Byron Bay.`,
+    `${businessName} invites you to ${eventType}. Join us for good vibes, great people, and the Byron Bay spirit we all love.`
+  ];
+  return getRandomElement(captions);
+};
+
+export const generateStressTestData = async () => {
+  console.log('🚀 Generating stress test data with 50% videos...');
   
   try {
-    // Get existing data
+    // Generate 100 businesses
+    const businesses: Business[] = [];
+    
+    for (let i = 0; i < 100; i++) {
+      const businessTemplate = getRandomElement(BYRON_BAY_BUSINESSES);
+      const businessId = `stress_business_${i + 1}`;
+      
+      const business: Business = {
+        id: businessId,
+        name: `${businessTemplate.name} ${i + 1}`,
+        address: generateRandomAddress(),
+        description: generateRandomDescription(`${businessTemplate.name} ${i + 1}`),
+        tags: businessTemplate.tags,
+        website: `https://${businessTemplate.name.toLowerCase().replace(/\s+/g, '')}-${i + 1}.com.au`,
+        socialLinks: [
+          `https://facebook.com/${businessTemplate.name.toLowerCase().replace(/\s+/g, '')}-${i + 1}`,
+          `https://instagram.com/${businessTemplate.name.toLowerCase().replace(/\s+/g, '')}-${i + 1}`
+        ],
+        image: getRandomElement(SAMPLE_IMAGES)
+      };
+      
+      businesses.push(business);
+    }
+    
+    // Generate 500 events (50% videos, 50% images)
+    const events: Event[] = [];
+    
+    for (let i = 0; i < 500; i++) {
+      const business = getRandomElement(businesses);
+      const businessTemplate = BYRON_BAY_BUSINESSES.find(b => 
+        business.name.includes(b.name.split(' ')[0])
+      ) || BYRON_BAY_BUSINESSES[0];
+      
+      const eventType = getRandomElement(businessTemplate.eventTypes);
+      const eventId = `stress_event_${i + 1}`;
+      
+      // 50% chance of video
+      const isVideo = Math.random() < 0.5;
+      const media = getRandomMedia(isVideo);
+      
+      const event: Event = {
+        id: eventId,
+        businessId: business.id,
+        title: `${eventType} ${i + 1}`,
+        caption: generateEventCaption(eventType, business.name),
+        date: getRandomDate(),
+        link: `https://eventbrite.com/events/${eventId}`,
+        tags: business.tags,
+        ...media // Spread video or image
+      };
+      
+      events.push(event);
+    }
+    
+    // Load existing data
     const existingBusinesses = await AsyncStorage.getItem('businesses');
     const existingEvents = await AsyncStorage.getItem('events');
     
-    const currentBusinesses = existingBusinesses ? JSON.parse(existingBusinesses) : [];
-    const currentEvents = existingEvents ? JSON.parse(existingEvents) : [];
+    const currentBusinesses: Business[] = existingBusinesses ? JSON.parse(existingBusinesses) : [];
+    const currentEvents: Event[] = existingEvents ? JSON.parse(existingEvents) : [];
     
-    console.log(`📊 Current data: ${currentBusinesses.length} businesses, ${currentEvents.length} events`);
+    // Remove any existing stress test data
+    const filteredBusinesses = currentBusinesses.filter(b => !b.id.startsWith('stress_business_'));
+    const filteredEvents = currentEvents.filter(e => !e.id.startsWith('stress_event_'));
     
-    // Generate 100 new businesses
-    const newBusinesses: Business[] = [];
-    for (let i = 0; i < 100; i++) {
-      newBusinesses.push(generateBusiness(`stress_biz_${i}`));
-    }
-    
-    // Generate 5 events per business (500 total events)
-    const newEvents: Event[] = [];
-    newBusinesses.forEach((business, bizIndex) => {
-      for (let eventIndex = 0; eventIndex < 5; eventIndex++) {
-        newEvents.push(generateEvent(business.id, `stress_event_${bizIndex}_${eventIndex}`));
-      }
-    });
-    
-    // Merge with existing data
-    const allBusinesses = [...currentBusinesses, ...newBusinesses];
-    const allEvents = [...currentEvents, ...newEvents];
+    // Add new stress test data
+    const updatedBusinesses = [...filteredBusinesses, ...businesses];
+    const updatedEvents = [...filteredEvents, ...events];
     
     // Save to AsyncStorage
-    await AsyncStorage.setItem('businesses', JSON.stringify(allBusinesses));
-    await AsyncStorage.setItem('events', JSON.stringify(allEvents));
+    await AsyncStorage.setItem('businesses', JSON.stringify(updatedBusinesses));
+    await AsyncStorage.setItem('events', JSON.stringify(updatedEvents));
     
-    console.log('✅ Stress test data generated successfully!');
-    console.log(`📈 New totals: ${allBusinesses.length} businesses, ${allEvents.length} events`);
-    console.log('🎬 Includes mix of images and videos for media stress testing');
-    console.log('📅 Events spread across next 3 months');
+    console.log(`✅ Generated ${businesses.length} businesses and ${events.length} events`);
+    console.log(`📹 Videos: ${events.filter(e => e.video).length} (${Math.round(events.filter(e => e.video).length / events.length * 100)}%)`);
+    console.log(`🖼️ Images: ${events.filter(e => e.image).length} (${Math.round(events.filter(e => e.image).length / events.length * 100)}%)`);
     
-    return {
-      businesses: allBusinesses.length,
-      events: allEvents.length,
-      newBusinesses: newBusinesses.length,
-      newEvents: newEvents.length
-    };
+    alert(`Successfully generated ${businesses.length} test businesses and ${events.length} test events!\n\n📹 Videos: ${events.filter(e => e.video).length}\n🖼️ Images: ${events.filter(e => e.image).length}`);
     
   } catch (error) {
-    console.error('❌ Error generating stress test data:', error);
-    throw error;
+    console.error('Error generating stress test data:', error);
+    alert('Error generating test data. Check console for details.');
   }
-}
+};
 
-// Helper function to clear all generated data (for cleanup)
-export async function clearStressTestData() {
+export const clearStressTestData = async () => {
   console.log('🧹 Clearing stress test data...');
   
   try {
     const existingBusinesses = await AsyncStorage.getItem('businesses');
     const existingEvents = await AsyncStorage.getItem('events');
     
-    if (existingBusinesses) {
-      const businesses = JSON.parse(existingBusinesses);
-      const originalBusinesses = businesses.filter((b: any) => !b.id.startsWith('stress_biz_'));
-      await AsyncStorage.setItem('businesses', JSON.stringify(originalBusinesses));
-    }
+    const currentBusinesses: Business[] = existingBusinesses ? JSON.parse(existingBusinesses) : [];
+    const currentEvents: Event[] = existingEvents ? JSON.parse(existingEvents) : [];
     
-    if (existingEvents) {
-      const events = JSON.parse(existingEvents);
-      const originalEvents = events.filter((e: any) => !e.id.startsWith('stress_event_'));
-      await AsyncStorage.setItem('events', JSON.stringify(originalEvents));
-    }
+    // Keep only non-stress-test data
+    const filteredBusinesses = currentBusinesses.filter(b => !b.id.startsWith('stress_business_'));
+    const filteredEvents = currentEvents.filter(e => !e.id.startsWith('stress_event_'));
     
-    console.log('✅ Stress test data cleared!');
+    await AsyncStorage.setItem('businesses', JSON.stringify(filteredBusinesses));
+    await AsyncStorage.setItem('events', JSON.stringify(filteredEvents));
+    
+    const removedBusinesses = currentBusinesses.length - filteredBusinesses.length;
+    const removedEvents = currentEvents.length - filteredEvents.length;
+    
+    console.log(`✅ Removed ${removedBusinesses} test businesses and ${removedEvents} test events`);
+    alert(`Removed ${removedBusinesses} test businesses and ${removedEvents} test events!`);
     
   } catch (error) {
-    console.error('❌ Error clearing stress test data:', error);
-    throw error;
+    console.error('Error clearing stress test data:', error);
+    alert('Error clearing test data. Check console for details.');
   }
-}
+};

@@ -1,11 +1,36 @@
-// app/(tabs)/_layout.tsx
+// app/(tabs)/_layout.tsx - FIXED VERSION
 
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs, useRouter } from 'expo-router';
 import React from 'react';
 
+// Global callbacks
+let scrollToTopCallback: (() => void) | null = null;
+let clearFiltersCallback: (() => void) | null = null;
+
+export const setScrollToTopCallback = (callback: (() => void) | null) => {
+  scrollToTopCallback = callback;
+};
+
+export const setClearFiltersCallback = (callback: (() => void) | null) => {
+  clearFiltersCallback = callback;
+};
+
 export default function TabsLayout() {
   const router = useRouter();
+
+  const handleWhatsOnTabPress = (e: { preventDefault: () => void }) => {
+    if (clearFiltersCallback) {
+      // Has filters, clear them
+      e.preventDefault();
+      clearFiltersCallback();
+    } else if (scrollToTopCallback) {
+      // No filters, scroll to top
+      e.preventDefault();
+      scrollToTopCallback();
+    }
+    // If no callbacks, let default tab navigation work
+  };
 
   return (
     <Tabs
@@ -49,15 +74,12 @@ export default function TabsLayout() {
         },
       })}
     >
-      {/* What’s On tab (default route) */}
+      {/* What's On tab (default route) - FIXED */}
       <Tabs.Screen
         name="index"
         options={{ title: "What's On" }}
         listeners={{
-          tabPress: (e: { preventDefault: () => void }) => {
-            e.preventDefault();
-            router.push('/');
-          },
+          tabPress: handleWhatsOnTabPress,
         }}
       />
 

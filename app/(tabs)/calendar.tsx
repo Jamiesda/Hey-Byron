@@ -1,29 +1,127 @@
-// app/(tabs)/calendar.tsx
+// app/(tabs)/calendar.tsx - Clean Working Calendar
 // @ts-nocheck
 
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { ImageBackground, Platform, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import {
+  ImageBackground,
+  Platform,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import { Calendar } from 'react-native-calendars';
 
 const backgroundPattern = require('../../assets/background.png');
 
+type SelectionMode = 'single' | 'range';
+
 export default function CalendarScreen() {
   const router = useRouter();
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>('single');
   const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+    new Date().toISOString().slice(0, 10)
   );
+  const [startDate, setStartDate] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | null>(null);
 
-  const onDayPress = (day: { dateString: string }) => {
-    setSelectedDate(day.dateString);
-    router.push(`/?date=${day.dateString}`);
+  const formatDateRange = () => {
+    if (selectionMode === 'single') {
+      const date = new Date(selectedDate);
+      return date.toLocaleDateString('en-GB', { 
+        day: 'numeric', 
+        month: 'short', 
+        year: 'numeric' 
+      });
+    }
+    
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      return `${start.getDate()}-${end.getDate()} ${start.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`;
+    }
+    
+    if (startDate) {
+      const start = new Date(startDate);
+      return `${start.getDate()} ${start.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })} - ...`;
+    }
+    
+    return 'Select period';
   };
 
-  // Get current month and year for display
-  const currentDate = new Date(selectedDate);
-  const monthName = currentDate.toLocaleString('default', { month: 'long' });
-  const year = currentDate.getFullYear();
+  const getMarkedDates = () => {
+    if (selectionMode === 'single') {
+      return {
+        [selectedDate]: {
+          selected: true,
+          selectedColor: 'rgba(194, 164, 120, 0.8)', // Gold/tan accent color
+          selectedTextColor: '#000000'
+        }
+      };
+    }
+
+    const marked: any = {};
+    
+    if (startDate && !endDate) {
+      marked[startDate] = {
+        selected: true,
+        selectedColor: 'rgba(194, 164, 120, 0.8)', // Gold/tan accent color
+        selectedTextColor: '#000000'
+      };
+    } else if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const current = new Date(start);
+      
+      while (current <= end) {
+        const dateStr = current.toISOString().slice(0, 10);
+        marked[dateStr] = {
+          selected: true,
+          selectedColor: 'rgba(194, 164, 120, 0.8)', // Gold/tan accent color
+          selectedTextColor: '#000000'
+        };
+        current.setDate(current.getDate() + 1);
+      }
+    }
+    
+    return marked;
+  };
+
+  const onDayPress = (day: { dateString: string }) => {
+    if (selectionMode === 'single') {
+      setSelectedDate(day.dateString);
+      router.push(`/?date=${day.dateString}`);
+    } else {
+      if (!startDate || (startDate && endDate)) {
+        setStartDate(day.dateString);
+        setEndDate(null);
+      } else if (startDate && !endDate) {
+        if (new Date(day.dateString) >= new Date(startDate)) {
+          setEndDate(day.dateString);
+        } else {
+          setEndDate(startDate);
+          setStartDate(day.dateString);
+        }
+      }
+    }
+  };
+
+  const resetSelection = () => {
+    setStartDate(null);
+    setEndDate(null);
+    setSelectedDate(new Date().toISOString().slice(0, 10));
+    // Navigate back to clean What's On feed (removes all date filters)
+    router.replace('/(tabs)');
+  };
+
+  const setPeriod = () => {
+    if (selectionMode === 'range' && startDate && endDate) {
+      router.push(`/?startDate=${startDate}&endDate=${endDate}`);
+    }
+  };
 
   return (
     <ImageBackground 
@@ -31,86 +129,69 @@ export default function CalendarScreen() {
       style={styles.background}
       resizeMode="repeat"
     >
-      {/* Inverted Gradient Overlay */}
       <LinearGradient 
-        colors={['rgba(0, 0, 0, 0.85)', 'rgba(43, 146, 168, 0.9)']} 
+        colors={['rgb(16, 78, 78)', 'rgb(30, 120, 120)']} 
         style={StyleSheet.absoluteFillObject}
       />
       
       <SafeAreaView style={styles.safe}>
+        {/* Header */}
         <View style={styles.headerContainer}>
-          <Text style={styles.header}>Calendar</Text>
-          <Text style={styles.subHeader}>{monthName} {year}</Text>
+          <Text style={styles.header}>Select custom period</Text>
+          
+          <TouchableOpacity onPress={resetSelection} style={styles.resetButton}>
+            <Text style={styles.resetText}>Reset</Text>
+          </TouchableOpacity>
         </View>
-        
-        <View style={styles.calendarContainer}>
+
+        {/* Current Selection Display */}
+        <View style={styles.selectionDisplay}>
+          <Text style={styles.selectionText}>{formatDateRange()}</Text>
+        </View>
+
+        {/* Mode Toggle */}
+        <View style={styles.modeToggle}>
+          <TouchableOpacity 
+            style={[styles.modeButton, selectionMode === 'single' && styles.modeButtonActive]}
+            onPress={() => setSelectionMode('single')}
+          >
+            <Text style={[styles.modeButtonText, selectionMode === 'single' && styles.modeButtonTextActive]}>
+              Single Date
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.modeButton, selectionMode === 'range' && styles.modeButtonActive]}
+            onPress={() => setSelectionMode('range')}
+          >
+            <Text style={[styles.modeButtonText, selectionMode === 'range' && styles.modeButtonTextActive]}>
+              Date Range
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Calendar - Simple and Clean */}
+        <View style={styles.calendarWrapper}>
           <Calendar
             current={selectedDate}
             onDayPress={onDayPress}
-            markedDates={{
-              [selectedDate]: { 
-                selected: true, 
-                disableTouchEvent: true,
-                selectedColor: '#D2B48C',
-                selectedTextColor: '#000'
-              },
-            }}
+            markedDates={getMarkedDates()}
             style={styles.calendar}
             theme={{
-              calendarBackground: 'rgba(255, 255, 255, 0.1)',
-              dayTextColor: '#ffffff',
-              textSectionTitleColor: '#D2B48C',
-              monthTextColor: '#ffffff',
-              arrowColor: '#D2B48C',
-              selectedDayBackgroundColor: '#D2B48C',
+              calendarBackground: '#FFFFFF',
+              dayTextColor: '#000000',
+              textSectionTitleColor: '#666666',
+              monthTextColor: '#000000',
+              arrowColor: 'rgba(194, 164, 120, 1)', // Gold/tan accent color
+              selectedDayBackgroundColor: 'rgba(194, 164, 120, 0.8)', // Gold/tan accent color
               selectedDayTextColor: '#000000',
-              todayTextColor: '#D2B48C',
+              todayTextColor: 'rgba(194, 164, 120, 1)', // Gold/tan accent color
               textDayFontSize: 16,
               textMonthFontSize: 18,
               textDayHeaderFontSize: 14,
-              textDayFontWeight: '500',
-              textMonthFontWeight: '700',
-              textDayHeaderFontWeight: '600',
-              'stylesheet.calendar.header': {
-                week: {
-                  marginTop: 15,
-                  marginBottom: 10,
-                  flexDirection: 'row',
-                  justifyContent: 'space-around',
-                },
-                dayHeader: {
-                  marginTop: 2,
-                  marginBottom: 7,
-                  width: 32,
-                  textAlign: 'center',
-                  fontSize: 14,
-                  fontWeight: '600',
-                  color: '#D2B48C',
-                },
-              },
-              'stylesheet.day.basic': {
-                base: {
-                  width: 32,
-                  height: 32,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 16,
-                },
-                text: {
-                  marginTop: Platform.OS === 'android' ? 4 : 6,
-                  fontSize: 16,
-                  fontWeight: '500',
-                  color: '#ffffff',
-                },
-                today: {
-                  backgroundColor: 'rgba(210, 180, 140, 0.2)',
-                  borderWidth: 2,
-                  borderColor: '#D2B48C',
-                },
-                selected: {
-                  backgroundColor: '#D2B48C',
-                },
-              },
+              textDayFontWeight: '400',
+              textMonthFontWeight: '600',
+              textDayHeaderFontWeight: '500',
             }}
             hideExtraDays={true}
             disableMonthChange={false}
@@ -119,30 +200,30 @@ export default function CalendarScreen() {
             enableSwipeMonths={true}
           />
         </View>
-        
-        <View style={styles.bottomContainer}>
-          <View style={styles.legendContainer}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#D2B48C' }]} />
-              <Text style={styles.legendText}>Selected Date</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[
-                styles.legendDot, 
-                { 
-                  backgroundColor: 'rgba(210, 180, 140, 0.2)', 
-                  borderWidth: 2, 
-                  borderColor: '#D2B48C' 
-                }
-              ]} />
-              <Text style={styles.legendText}>Today</Text>
-            </View>
+
+        {/* Spacer for single date mode to maintain consistent layout */}
+        {selectionMode === 'single' && <View style={styles.spacer} />}
+
+        {/* Set Period Button - Now positioned same as continue button */}
+        {selectionMode === 'range' && (
+          <View style={styles.bottomContainer}>
+            <TouchableOpacity 
+              style={[
+                styles.setPeriodButton, 
+                (!startDate || !endDate) && styles.setPeriodButtonDisabled
+              ]}
+              onPress={setPeriod}
+              disabled={!startDate || !endDate}
+            >
+              <Text style={[
+                styles.setPeriodButtonText,
+                (!startDate || !endDate) && styles.setPeriodButtonTextDisabled
+              ]}>
+                Set period
+              </Text>
+            </TouchableOpacity>
           </View>
-          
-          <Text style={styles.instructionText}>
-            Tap any date to view events for that day
-          </Text>
-        </View>
+        )}
       </SafeAreaView>
     </ImageBackground>
   );
@@ -157,84 +238,114 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     paddingTop: Platform.OS === 'android' ? 24 : 0,
-    paddingHorizontal: 16,
   },
   headerContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 8,
-    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.2)', // Light border for dark theme
   },
   header: {
-    fontSize: 36,
-    fontWeight: '800',
-    textAlign: 'center',
-    marginVertical: 8,
-    color: '#fff',
-    textShadowColor: 'rgba(0,0,0,0.7)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 0,
-    marginTop: -5,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-  },
-  subHeader: {
     fontSize: 18,
+    fontWeight: '600',
+    color: '#fff', // White text for dark background
+    flex: 1,
+  },
+  resetButton: {
+    padding: 8,
+  },
+  resetText: {
+    fontSize: 16,
+    color: 'rgba(194, 164, 120, 1)', // Gold/tan accent color
     fontWeight: '500',
-    color: '#D2B48C',
-    textAlign: 'center',
-    marginTop: 8,
-    letterSpacing: 0.5,
   },
-  calendarContainer: {
-    marginHorizontal: 20,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  calendar: {
-    backgroundColor: 'transparent',
-    borderRadius: 15,
-  },
-  bottomContainer: {
-    marginTop: 40,
+  selectionDisplay: {
     paddingHorizontal: 20,
-    alignItems: 'center',
+    paddingVertical: 20,
   },
-  legendContainer: {
+  selectionText: {
+    fontSize: 24,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.9)', // Light text for dark background
+  },
+  modeToggle: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
+    marginHorizontal: 20,
     marginBottom: 20,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  legendDot: {
-    width: 16,
-    height: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)', // Semi-transparent for dark theme
     borderRadius: 8,
-    marginRight: 8,
+    padding: 4,
   },
-  legendText: {
-    color: '#ffffff',
+  modeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  modeButtonActive: {
+    backgroundColor: 'rgba(194, 164, 120, 1)', // Gold/tan accent color
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modeButtonText: {
     fontSize: 14,
     fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.7)', // Light text for dark background
   },
-  instructionText: {
-    color: '#cccccc',
+  modeButtonTextActive: {
+    color: '#000000', // Black text on gold background
+  },
+  calendarWrapper: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    // Fixed height for consistency between modes
+    height: 400,
+  },
+  calendar: {
+    borderRadius: 12,
+    paddingBottom: 20,
+  },
+  spacer: {
+    // Height equivalent to the bottom container + set period button
+    height: 76, // 20 padding + 16 button padding + 16 button padding + 24 button height
+  },
+  bottomContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 20, // Changed from paddingBottom: 20 to match interests page
+  },
+  setPeriodButton: {
+    backgroundColor: 'rgba(194, 164, 120, 1)', // Gold/tan accent color
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  setPeriodButtonDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.2)', // Light disabled for dark theme
+  },
+  setPeriodButtonText: {
+    color: '#000000',
     fontSize: 16,
-    textAlign: 'center',
-    fontStyle: 'italic',
-    lineHeight: 22,
+    fontWeight: '600',
+  },
+  setPeriodButtonTextDisabled: {
+    color: 'rgba(255,255,255,0.5)', // Light disabled text for dark theme
   },
 });

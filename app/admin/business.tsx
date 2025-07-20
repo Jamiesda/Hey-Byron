@@ -1,18 +1,20 @@
+// app/admin/business.tsx
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Button,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
+    ActivityIndicator,
+    Alert,
+    Button,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View
 } from 'react-native';
 import { Business } from '../../data/businesses';
 
@@ -39,7 +41,7 @@ export default function BusinessAdmin() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
+      quality: 0.6, // Reduced from 0.7
     });
     if (!result.canceled && result.assets.length > 0) {
       setImageUri(result.assets[0].uri);
@@ -60,7 +62,9 @@ export default function BusinessAdmin() {
         description: description.trim(),
         website: website.trim() || undefined,
         tags: tags.trim() ? tags.split(',').map(t => t.trim()) : [],
-        socialLinks: socialLinks.trim() ? socialLinks.split(',').map(s => s.trim()) : [],
+        socialLinks: socialLinks.trim() 
+          ? socialLinks.split(',').map(s => s.trim()) 
+          : [],
         image: imageUri || undefined,
       };
       const stored = await AsyncStorage.getItem('businesses') || '[]';
@@ -92,7 +96,11 @@ export default function BusinessAdmin() {
             value={name}
             onChangeText={setName}
             placeholder="Enter business name"
+            maxLength={100}
           />
+          <Text style={styles.characterCount}>
+            {name.length}/100 characters
+          </Text>
 
           {/* Address */}
           <Text style={styles.label}>Address</Text>
@@ -101,6 +109,7 @@ export default function BusinessAdmin() {
             value={address}
             onChangeText={setAddress}
             placeholder="Enter address"
+            maxLength={200}
           />
 
           {/* Description */}
@@ -111,7 +120,11 @@ export default function BusinessAdmin() {
             onChangeText={setDescription}
             placeholder="Enter description"
             multiline
+            maxLength={2500}
           />
+          <Text style={styles.characterCount}>
+            {description.length}/2,500 characters
+          </Text>
 
           {/* Tags */}
           <Text style={styles.label}>Tags (comma-separated)</Text>
@@ -120,6 +133,7 @@ export default function BusinessAdmin() {
             value={tags}
             onChangeText={setTags}
             placeholder="e.g. cafe, yoga, shop"
+            maxLength={200}
           />
 
           {/* Website */}
@@ -129,6 +143,7 @@ export default function BusinessAdmin() {
             value={website}
             onChangeText={setWebsite}
             placeholder="https://"
+            maxLength={200}
           />
 
           {/* Social Links */}
@@ -138,6 +153,7 @@ export default function BusinessAdmin() {
             value={socialLinks}
             onChangeText={setSocialLinks}
             placeholder="https://facebook.com/..., https://instagram.com/..."
+            maxLength={500}
           />
 
           {/* Image */}
@@ -175,7 +191,14 @@ const styles = StyleSheet.create({
     borderRadius: 5, 
     padding: 10, 
     marginTop: 5,
+    marginBottom: 8,
     backgroundColor: '#1E1E1E', // Dark input background
     color: '#FFFFFF' // White text in inputs
+  },
+  characterCount: {
+    fontSize: 12,
+    color: '#888',
+    textAlign: 'right',
+    marginBottom: 8,
   },
 });

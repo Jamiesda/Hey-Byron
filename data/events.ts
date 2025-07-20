@@ -7,6 +7,7 @@ export interface Event {
   id: string;
   businessId: string;
   title: string;
+  caption?: string;      // Optional event description
   date: string;          // ISO date-time string
   link?: string;         // Optional external URL
   tags: string[];        // Tags for filtering by user interests

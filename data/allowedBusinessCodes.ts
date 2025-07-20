@@ -9,6 +9,9 @@ export const ALLOWED_BUSINESS_CODES = [
     'Northern',
     'Beachy',
     'Otherside',
+    'Themez123',
+    'TheLoft',
+    'Thenorthbyron',
     // …and any others you want to allow
   ];
   
