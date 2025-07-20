@@ -5,12 +5,13 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
 import {
-    Modal,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Modal,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { MAX_VIDEO_SIZE, isVideo } from '../../constants/fileConfig';
 import { INTERNAL_OPTIONS } from '../../constants/interestOptions';
@@ -23,6 +24,11 @@ export interface EventFormData {
   interests: string[];
   date: Date;
   image?: string;
+  // REPEAT FUNCTIONALITY:
+  isRecurring: boolean;
+  recurrenceType?: 'daily' | 'weekly' | 'custom';
+  recurrenceCount?: number;
+  customDates?: Date[];
 }
 
 export interface UploadState {
@@ -57,6 +63,8 @@ export default function EventForm({
 }: EventFormProps) {
   const [showDateModal, setShowDateModal] = useState(false);
   const [tempDate, setTempDate] = useState(eventData.date);
+  const [showCustomDateModal, setShowCustomDateModal] = useState(false);
+  const [tempCustomDate, setTempCustomDate] = useState(new Date());
 
   const handleFieldChange = (field: keyof EventFormData) => (value: any) => {
     onDataChange({ [field]: value });
@@ -80,7 +88,20 @@ export default function EventForm({
     });
   };
 
-  const isDisabled = loading || uploadState.isUploading || !uploadState.isComplete || !!uploadState.error;
+  // Check if all mandatory fields are filled
+  const hasMandatoryFields = eventData.title.trim() && 
+                            eventData.interests.length > 0 && 
+                            eventData.date;
+
+  // Button should only be disabled if:
+  // - Currently saving/loading
+  // - Currently uploading new media 
+  // - Has upload error
+  // - Missing mandatory fields
+  const isDisabled = loading || 
+                     uploadState.isUploading || 
+                     !!uploadState.error ||
+                     !hasMandatoryFields;
 
   return (
     <View style={styles.eventFormCard}>
@@ -265,11 +286,124 @@ export default function EventForm({
         </TouchableOpacity>
       </View>
 
+      {/* Repeat Event Section */}
+      <View style={styles.inputContainer}>
+        <View style={styles.toggleContainer}>
+          <Text style={styles.inputLabel}>Repeat Event</Text>
+          <Switch
+            value={eventData.isRecurring}
+            onValueChange={(value) => {
+              handleFieldChange('isRecurring')(value);
+              if (!value) {
+                handleFieldChange('recurrenceType')(undefined);
+                handleFieldChange('recurrenceCount')(undefined);
+                handleFieldChange('customDates')([]);
+              }
+            }}
+            trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#4fc3f7' }}
+            thumbColor={eventData.isRecurring ? '#fff' : 'rgba(255,255,255,0.5)'}
+          />
+        </View>
+      </View>
+
+      {eventData.isRecurring && (
+        <>
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Repeat Frequency *</Text>
+            <View style={styles.recurrenceButtons}>
+              {['daily', 'weekly', 'custom'].map(type => (
+                <TouchableOpacity
+                  key={type}
+                  style={[
+                    styles.recurrenceButton,
+                    eventData.recurrenceType === type && styles.recurrenceButtonSelected
+                  ]}
+                  onPress={() => {
+                    handleFieldChange('recurrenceType')(type);
+                    if (type === 'daily') handleFieldChange('recurrenceCount')(7);
+                    if (type === 'weekly') handleFieldChange('recurrenceCount')(4);
+                    if (type === 'custom') {
+                      handleFieldChange('recurrenceCount')(undefined);
+                      handleFieldChange('customDates')([eventData.date]);
+                    }
+                  }}
+                >
+                  <Text style={[
+                    styles.recurrenceButtonText,
+                    eventData.recurrenceType === type && styles.recurrenceButtonTextSelected
+                  ]}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {(eventData.recurrenceType === 'daily' || eventData.recurrenceType === 'weekly') && (
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>
+                Number of events (Max: {eventData.recurrenceType === 'daily' ? '30' : '10'}) *
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={eventData.recurrenceCount?.toString() || ''}
+                onChangeText={(text) => {
+                  const num = parseInt(text) || 1;
+                  const max = eventData.recurrenceType === 'daily' ? 30 : 10;
+                  handleFieldChange('recurrenceCount')(Math.min(Math.max(num, 1), max));
+                }}
+                keyboardType="numeric"
+                maxLength={2}
+              />
+            </View>
+          )}
+
+          {eventData.recurrenceType === 'custom' && (
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Custom Dates (Max: 10) *</Text>
+              <View style={styles.customDatesContainer}>
+                {(eventData.customDates || []).map((date, index) => (
+                  <View key={index} style={styles.customDateItem}>
+                    <Text style={styles.customDateText}>
+                      {formatDate(date)}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const newDates = [...(eventData.customDates || [])];
+                        newDates.splice(index, 1);
+                        handleFieldChange('customDates')(newDates);
+                      }}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#ff6b6b" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+
+              {(!eventData.customDates || eventData.customDates.length < 10) && (
+                <TouchableOpacity
+                  style={styles.addDateButton}
+                  onPress={() => {
+                    setTempCustomDate(new Date());
+                    setShowCustomDateModal(true);
+                  }}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color="#4fc3f7" />
+                  <Text style={styles.addDateButtonText}>
+                    Add Date ({(eventData.customDates || []).length}/10)
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </>
+      )}
+
       {/* Save Event Button */}
       <LoadingButton
         onPress={onSave}
         loading={loading || uploadState.isUploading}
-        disabled={!uploadState.isComplete || !!uploadState.error}
+        disabled={isDisabled}
         title={editingMode ? 'Update Event' : 'Save Event'}
         loadingTitle={
           loading ? 'Saving...' : 
@@ -307,6 +441,47 @@ export default function EventForm({
                   }}
                 >
                   <Text style={[styles.modalButtonText, styles.modalButtonPrimaryText]}>Set Date</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Custom Date Modal */}
+      {showCustomDateModal && (
+        <Modal transparent animationType="slide" visible>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Add Event Date</Text>
+              <DateTimePicker
+                value={tempCustomDate}
+                mode="datetime"
+                display="spinner"
+                textColor="#fff"
+                onChange={(_, selected) => {
+                  if (selected) setTempCustomDate(selected);
+                }}
+              />
+              <View style={styles.modalButtons}>
+                <TouchableOpacity 
+                  style={styles.modalButton}
+                  onPress={() => setShowCustomDateModal(false)}
+                >
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.modalButton, styles.modalButtonPrimary]}
+                  onPress={() => {
+                    const currentDates = eventData.customDates || [];
+                    if (currentDates.length < 10) {
+                      const newDates = [...currentDates, tempCustomDate].sort((a, b) => a.getTime() - b.getTime());
+                      handleFieldChange('customDates')(newDates);
+                    }
+                    setShowCustomDateModal(false);
+                  }}
+                >
+                  <Text style={[styles.modalButtonText, styles.modalButtonPrimaryText]}>Add Date</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -482,6 +657,67 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
   },
+  toggleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  recurrenceButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  recurrenceButton: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  recurrenceButtonSelected: {
+    backgroundColor: '#fff',
+  },
+  recurrenceButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  recurrenceButtonTextSelected: {
+    color: '#000',
+  },
+  customDatesContainer: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  customDateItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    padding: 12,
+  },
+  customDateText: {
+    color: '#fff',
+    fontSize: 14,
+    flex: 1,
+  },
+  addDateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(79, 195, 247, 0.1)',
+    borderRadius: 8,
+    padding: 12,
+    gap: 8,
+  },
+  addDateButtonText: {
+    color: '#4fc3f7',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.8)',
@@ -494,6 +730,13 @@ const styles = StyleSheet.create({
     padding: 20,
     width: '85%',
     maxWidth: 400,
+  },
+  modalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 20,
   },
   modalButtons: {
     flexDirection: 'row',
@@ -520,4 +763,4 @@ const styles = StyleSheet.create({
   modalButtonPrimaryText: {
     color: '#000',
   },
-}); 
+});

@@ -60,6 +60,43 @@ async function testFirestoreAccess() {
 }
 
 /**
+ * Compress video using FFmpeg with optimized settings
+ */
+function compressVideoWithFFmpeg(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .videoCodec(COMPRESSION_SETTINGS.videoCodec)
+      .audioCodec(COMPRESSION_SETTINGS.audioCodec)
+      .videoBitrate(COMPRESSION_SETTINGS.videoBitrate)
+      .fps(COMPRESSION_SETTINGS.fps)
+      .addOptions([
+        `-crf ${COMPRESSION_SETTINGS.crf}`,
+        '-movflags +faststart',
+        '-preset fast',
+        `-vf scale='min(${COMPRESSION_SETTINGS.maxWidth},iw)':min'(${COMPRESSION_SETTINGS.maxHeight},ih)':force_original_aspect_ratio=decrease`
+      ])
+      .format(COMPRESSION_SETTINGS.format)
+      .on('start', (commandLine) => {
+        logger.info('FFmpeg started:', commandLine);
+      })
+      .on('progress', (progress) => {
+        if (progress.percent) {
+          logger.info(`Compression progress: ${Math.round(progress.percent)}%`);
+        }
+      })
+      .on('end', () => {
+        logger.info('FFmpeg compression completed');
+        resolve();
+      })
+      .on('error', (err) => {
+        logger.error('FFmpeg error:', err);
+        reject(err);
+      })
+      .save(outputPath);
+  });
+}
+
+/**
  * Cloud Function that automatically compresses event videos uploaded to Firebase Storage
  * Targets files uploaded to events/ folder in australia-southeast1 region
  */
@@ -197,7 +234,7 @@ exports.processAustraliaEventVideo = onObjectFinalized({
         savedBytes: fileSize - compressedSize
       });
       
-      // NEW: Move corresponding pending event to live events
+      // Move pending event to live events with compressed URL
       const compressedUrl = `https://firebasestorage.googleapis.com/v0/b/${event.data.bucket}/o/events%2F${originalName}_compressed.mp4?alt=media`;
       
       // STEP 1: Query pending events (with individual error handling)
@@ -248,6 +285,7 @@ exports.processAustraliaEventVideo = onObjectFinalized({
       }
       
       // STEP 2: Write to events collection (with individual error handling)
+      let liveEventCreated = false;
       try {
         logger.info("📝 STEP 2: Attempting to write to events collection...");
         
@@ -262,6 +300,7 @@ exports.processAustraliaEventVideo = onObjectFinalized({
         delete eventData.image;
         
         await db.collection('events').doc(pendingEventDoc.id).set(eventData);
+        liveEventCreated = true; // Mark as successfully created
         
         logger.info("✅ STEP 2: Successfully wrote to events collection:", {
           eventId: pendingEventDoc.id,
@@ -274,108 +313,87 @@ exports.processAustraliaEventVideo = onObjectFinalized({
           eventId: pendingEventDoc.id,
           stack: writeError.stack
         });
-        return; // Exit early if write fails
+        return; // Exit early if write fails - don't delete anything
       }
       
-      // STEP 3: Delete from pending events (with individual error handling)
-      try {
-        logger.info("🗑️ STEP 3: Attempting to delete from pending-events collection...");
-        
-        await pendingEventDoc.ref.delete();
-        
-        logger.info("✅ STEP 3: Successfully deleted from pending-events collection:", {
-          eventId: pendingEventDoc.id
-        });
-        
-        logger.info("🎉 ALL STEPS COMPLETED: Event moved from pending to live successfully:", {
-          eventId: pendingEventDoc.id,
-          compressedUrl: compressedUrl
-        });
-      } catch (deleteError) {
-        logger.error("❌ STEP 3: Failed to delete from pending-events collection:", {
-          error: deleteError.message,
-          code: deleteError.code,
-          eventId: pendingEventDoc.id,
-          stack: deleteError.stack
-        });
-        // Don't return here - the event was successfully created, deletion failure is not critical
-      }
-      
-      // NEW: Delete the original large file to save storage
-      try {
-        logger.info("Deleting original large file to save storage:", filePath);
-        await bucket.file(filePath).delete();
-        logger.info("✅ Original file deleted successfully:", filePath);
-      } catch (deleteError) {
-        logger.warn("⚠️ Failed to delete original file (not critical):", {
-          filePath,
-          error: deleteError.message
-        });
-        // Don't throw - compression was successful, deletion failure is not critical
+      // STEP 3: Delete from pending events (only if live event was created)
+      if (liveEventCreated) {
+        try {
+          logger.info("🗑️ STEP 3: Attempting to delete from pending-events collection...");
+          
+          await pendingEventDoc.ref.delete();
+          
+          logger.info("✅ STEP 3: Successfully deleted from pending-events collection:", {
+            eventId: pendingEventDoc.id
+          });
+          
+          // STEP 4: Delete original file ONLY after both live creation AND pending deletion succeed
+          try {
+            logger.info("🗑️ STEP 4: Deleting original large file after successful live event creation:", filePath);
+            await bucket.file(filePath).delete();
+            logger.info("✅ STEP 4: Original file deleted successfully - live event active, pending event cleaned up:", filePath);
+          } catch (deleteError) {
+            logger.warn("⚠️ STEP 4: Failed to delete original file (not critical - live event created successfully):", {
+              filePath,
+              error: deleteError.message
+            });
+          }
+          
+          logger.info("🎉 ALL STEPS COMPLETED: Event moved from pending to live, original file cleaned up:", {
+            eventId: pendingEventDoc.id,
+            compressedUrl: compressedUrl
+          });
+          
+        } catch (deleteError) {
+          logger.error("❌ STEP 3: Failed to delete from pending-events collection:", {
+            error: deleteError.message,
+            code: deleteError.code,
+            eventId: pendingEventDoc.id,
+            stack: deleteError.stack
+          });
+          
+          logger.warn("⚠️ Not deleting original file because pending event cleanup failed - keeping for safety");
+        }
       }
     } else {
       logger.info("Compression not beneficial, keeping original:", {
         originalSize: fileSize,
         compressedSize: compressedSize
       });
+      
+      // Since compression wasn't beneficial, we can safely delete the original
+      // as it's not providing value over keeping the smaller "compressed" version
+      try {
+        logger.info("Deleting original file since compression wasn't beneficial:", filePath);
+        await bucket.file(filePath).delete();
+        logger.info("✅ Original file deleted (compression not beneficial):", filePath);
+      } catch (deleteError) {
+        logger.warn("⚠️ Failed to delete original file:", {
+          filePath,
+          error: deleteError.message
+        });
+      }
     }
 
   } catch (error) {
-    logger.error("Event video compression failed:", { 
-      filePath, 
+    logger.error("Error during video compression process:", {
       error: error.message,
-      stack: error.stack 
+      stack: error.stack,
+      filePath: filePath
     });
-    // Don't throw - keep the original file if compression fails
   } finally {
-    // Cleanup temporary files
+    // Clean up temporary files
     try {
-      if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
-      if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
+      if (fs.existsSync(tempInputPath)) {
+        fs.unlinkSync(tempInputPath);
+        logger.info("Cleaned up temp input file");
+      }
+      if (fs.existsSync(tempOutputPath)) {
+        fs.unlinkSync(tempOutputPath);
+        logger.info("Cleaned up temp output file");
+      }
     } catch (cleanupError) {
-      logger.warn("Cleanup failed:", cleanupError.message);
+      logger.warn("Error cleaning up temp files:", cleanupError.message);
     }
   }
 });
-
-/**
- * Compress video using FFmpeg with AGGRESSIVE speed-optimized settings
- */
-function compressVideoWithFFmpeg(inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .videoCodec(COMPRESSION_SETTINGS.videoCodec)
-      .audioCodec(COMPRESSION_SETTINGS.audioCodec)
-      .videoBitrate(COMPRESSION_SETTINGS.videoBitrate)
-      .fps(COMPRESSION_SETTINGS.fps)
-      // NEW: Preserve aspect ratio while limiting size
-      .videoFilter(`scale='min(${COMPRESSION_SETTINGS.maxWidth},iw)':'min(${COMPRESSION_SETTINGS.maxHeight},ih)':force_original_aspect_ratio=decrease`)
-      .outputOptions([
-        `-crf ${COMPRESSION_SETTINGS.crf}`,
-        "-preset veryfast",          // CHANGED: Much faster preset (was "fast")
-        "-movflags +faststart",      // Enable fast start for web playback
-        "-pix_fmt yuv420p",          // Ensure compatibility
-        "-profile:v baseline",       // Baseline profile for max compatibility
-        "-level 3.0"                 // H.264 level for mobile compatibility
-      ])
-      .format(COMPRESSION_SETTINGS.format)
-      .on("start", (commandLine) => {
-        logger.info("FFmpeg started:", commandLine);
-      })
-      .on("progress", (progress) => {
-        logger.info("Compression progress:", {
-          percent: progress.percent,
-          timemark: progress.timemark
-        });
-      })
-      .on("end", () => {
-        logger.info("FFmpeg compression completed successfully");
-        resolve();
-      })
-      .on("error", (err) => {
-        logger.error("FFmpeg error:", err.message);
-        reject(new Error(`FFmpeg failed: ${err.message}`));
-      })
-      .save(outputPath);
-  });
-}

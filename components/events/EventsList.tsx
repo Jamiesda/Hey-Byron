@@ -2,6 +2,7 @@
 // Events list component extracted from dashboard.tsx
 
 import { Ionicons } from '@expo/vector-icons';
+import { ResizeMode, Video } from 'expo-av';
 import React from 'react';
 import {
     Image,
@@ -22,13 +23,16 @@ export interface EventsListProps {
   onDeletePending: (eventId: string) => void;
 }
 
-// Video Preview Component (static, no auto-play)
+// Video Preview Component (shows first frame as thumbnail)
 function VideoPreview({ uri }: { uri: string }) {
   return (
-    <Image 
-      source={{ uri }} 
+    <Video 
       style={styles.eventImg}
-      resizeMode="cover"
+      source={{ uri }}
+      shouldPlay={false}
+      useNativeControls={false}
+      resizeMode={ResizeMode.COVER}
+      isLooping={false}
     />
   );
 }

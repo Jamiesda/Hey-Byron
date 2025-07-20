@@ -5,13 +5,13 @@ import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import React from 'react';
 import {
-    Alert,
-    Image,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-    ViewStyle
+  Alert,
+  Image,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  ViewStyle
 } from 'react-native';
 import { isImage, isVideo } from '../../constants/fileConfig';
 import { uploadToFirebaseStorage } from '../../utils/firebaseUtils';
@@ -70,10 +70,11 @@ export default function MediaPicker({
       const ext = uri.split('.').pop() || (isVideo(uri) ? 'mp4' : 'jpg');
       const filename = `event_${Date.now()}.${ext}`;
       
+      // Call uploadToFirebaseStorage with the progress callback
       const url = await uploadToFirebaseStorage(
         uri, 
         filename,
-        (progress: number) => onUploadProgress?.(progress)
+        onUploadProgress
       );
       
       onUploadComplete?.(url);
@@ -213,4 +214,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-}); 
+});

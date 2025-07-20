@@ -71,6 +71,10 @@ export default function DashboardScreen() {
     link: '',
     interests: [],
     date: new Date(),
+    isRecurring: false,
+    recurrenceType: undefined,
+    recurrenceCount: undefined,
+    customDates: [],
   });
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [savingEvent, setSavingEvent] = useState(false);
@@ -272,6 +276,10 @@ export default function DashboardScreen() {
       link: '',
       interests: [],
       date: new Date(),
+      isRecurring: false,
+      recurrenceType: undefined,
+      recurrenceCount: undefined,
+      customDates: [],
     });
     setEditingEventId(null);
     setShowEventForm(false);
@@ -292,6 +300,10 @@ export default function DashboardScreen() {
       interests: event.tags || [],
       date: new Date(event.date),
       image: event.image || event.video,
+      isRecurring: false,
+      recurrenceType: undefined,
+      recurrenceCount: undefined,
+      customDates: [],
     });
     setEditingEventId(event.id);
     setShowEventForm(true);

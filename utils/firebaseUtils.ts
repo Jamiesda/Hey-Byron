@@ -1,10 +1,27 @@
-// utils/firebaseUtils.ts - Firebase Only (Migration Complete)
+// utils/firebaseUtils.ts - Updated with smart media cleanup
 
-import { collection, deleteDoc, doc, DocumentData, getDoc, getDocs, limit, orderBy, query, setDoc, where } from 'firebase/firestore';
-import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
-import { db, storage } from '../firebaseConfig'; // Use your existing Firebase setup
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  query,
+  setDoc,
+  where,
+  writeBatch
+} from 'firebase/firestore';
+import { deleteObject, getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
+import { db } from '../firebaseConfig';
 
-// Types for our data
+// Initialize Firebase Storage
+const storage = getStorage();
+
+// ==========================================
+// INTERFACES
+// ==========================================
+
 export interface FirebaseEvent {
   id: string;
   businessId: string;
@@ -17,6 +34,10 @@ export interface FirebaseEvent {
   video?: string;
   createdAt: string;
   updatedAt: string;
+  // Recurring event fields
+  recurringSeriesId?: string;
+  recurringIndex?: number;
+  totalRecurringEvents?: number;
 }
 
 export interface FirebaseBusiness {
@@ -26,325 +47,11 @@ export interface FirebaseBusiness {
   description: string;
   website?: string;
   tags: string[];
-  socialLinks?: string[];
+  socialLinks: string[];
   image?: string;
   createdAt: string;
   updatedAt: string;
 }
-
-// ==========================================
-// FIREBASE STORAGE UPLOAD FUNCTION
-// ==========================================
-
-export const uploadToFirebaseStorage = async (
-  localUri: string, 
-  filename: string, 
-  onProgress?: (progress: number) => void
-): Promise<string> => {
-  try {
-    const response = await fetch(localUri);
-    const blob = await response.blob();
-    
-    const storageRef = ref(storage, `events/${filename}`);
-    const uploadTask = uploadBytesResumable(storageRef, blob);
-    
-    return new Promise((resolve, reject) => {
-      uploadTask.on('state_changed',
-        (snapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          onProgress?.(Math.round(progress));
-        },
-        (error) => {
-          console.error('Upload failed:', error);
-          reject(error);
-        },
-        async () => {
-          try {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve(downloadUrl);
-          } catch (error) {
-            reject(error);
-          }
-        }
-      );
-    });
-  } catch (error) {
-    console.error('Upload setup failed:', error);
-    throw error;
-  }
-};
-
-// Polling configuration
-const POLLING_INTERVAL = 30000; // 30 seconds
-let pollingTimer: ReturnType<typeof setInterval> | null = null;
-let lastEventCount = 0;
-
-// ==========================================
-// ENHANCED EVENTS FUNCTIONS WITH POLLING
-// ==========================================
-
-/**
- * Load all events from Firebase with polling support
- * Returns events sorted by date (newest first)
- */
-export const loadEventsFromFirebase = async (): Promise<FirebaseEvent[]> => {
-  try {
-    console.log('Loading events from Firebase...');
-    
-    const eventsCollection = collection(db, 'events');
-    const eventsQuery = query(eventsCollection, orderBy('date', 'asc'));
-    const snapshot = await getDocs(eventsQuery);
-    
-    const events: FirebaseEvent[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data() as DocumentData;
-      events.push({
-        id: doc.id,
-        businessId: data.businessId || '',
-        title: data.title || '',
-        caption: data.caption,
-        date: data.date || '',
-        link: data.link,
-        tags: data.tags || [],
-        image: data.image,
-        video: data.video,
-        createdAt: data.createdAt || '',
-        updatedAt: data.updatedAt || ''
-      });
-    });
-    
-    // Update polling state
-    lastEventCount = events.length;
-    console.log(`✅ Loaded ${events.length} events from Firebase`);
-    return events;
-  } catch (error) {
-    console.error('❌ Error loading events from Firebase:', error);
-    throw new Error('Oops! Our server is down. Please try again later.');
-  }
-};
-
-/**
- * Start polling for new events
- * Returns a function to stop polling
- */
-export const startEventPolling = (onNewEvents: (events: FirebaseEvent[]) => void): (() => void) => {
-  if (pollingTimer) {
-    clearInterval(pollingTimer);
-  }
-
-  pollingTimer = setInterval(async () => {
-    try {
-      const events = await loadEventsFromFirebase();
-      
-      // Only notify if we have new events
-      if (events.length > lastEventCount) {
-        console.log(`🆕 Found ${events.length - lastEventCount} new events`);
-        onNewEvents(events);
-      }
-    } catch (error) {
-      console.error('Polling error:', error);
-      // Don't throw error during polling - just log it
-    }
-  }, POLLING_INTERVAL);
-
-  // Return function to stop polling
-  return () => {
-    if (pollingTimer) {
-      clearInterval(pollingTimer);
-      pollingTimer = null;
-    }
-  };
-};
-
-/**
- * Stop event polling
- */
-export const stopEventPolling = (): void => {
-  if (pollingTimer) {
-    clearInterval(pollingTimer);
-    pollingTimer = null;
-  }
-};
-
-/**
- * Check if there are new events (for pull-to-refresh)
- */
-export const checkForNewEvents = async (): Promise<{ hasNewEvents: boolean; eventCount: number }> => {
-  try {
-    const events = await loadEventsFromFirebase();
-    const hasNewEvents = events.length > lastEventCount;
-    return { hasNewEvents, eventCount: events.length };
-  } catch (error) {
-    console.error('Error checking for new events:', error);
-    return { hasNewEvents: false, eventCount: lastEventCount };
-  }
-};
-
-/**
- * Load events for a specific business
- */
-export const loadEventsForBusiness = async (businessId: string): Promise<FirebaseEvent[]> => {
-  try {
-    console.log(`Loading events for business: ${businessId}`);
-    
-    const eventsCollection = collection(db, 'events');
-    const eventsQuery = query(
-      eventsCollection, 
-      where('businessId', '==', businessId)
-    );
-    const snapshot = await getDocs(eventsQuery);
-    
-    const events: FirebaseEvent[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data() as DocumentData;
-      events.push({
-        id: doc.id,
-        businessId: data.businessId || '',
-        title: data.title || '',
-        caption: data.caption,
-        date: data.date || '',
-        link: data.link,
-        tags: data.tags || [],
-        image: data.image,
-        video: data.video,
-        createdAt: data.createdAt || '',
-        updatedAt: data.updatedAt || ''
-      });
-    });
-    
-    // Sort events by date client-side (newest first for admin dashboard)
-    events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    
-    console.log(`✅ Loaded ${events.length} events for business ${businessId}`);
-    return events;
-  } catch (error) {
-    console.error('❌ Error loading business events:', error);
-    throw new Error('Failed to load business events.');
-  }
-};
-
-// ==========================================
-// BUSINESSES FUNCTIONS
-// ==========================================
-
-/**
- * Load all businesses from Firebase
- * Returns businesses sorted by name
- */
-export const loadBusinessesFromFirebase = async (): Promise<FirebaseBusiness[]> => {
-  try {
-    console.log('Loading businesses from Firebase...');
-    
-    const businessesCollection = collection(db, 'businesses');
-    const businessesQuery = query(businessesCollection, orderBy('name', 'asc'));
-    const snapshot = await getDocs(businessesQuery);
-    
-    const businesses: FirebaseBusiness[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data() as DocumentData;
-      businesses.push({
-        id: doc.id,
-        name: data.name || '',
-        address: data.address || '',
-        description: data.description || '',
-        website: data.website,
-        tags: data.tags || [],
-        socialLinks: data.socialLinks || [],
-        image: data.image,
-        createdAt: data.createdAt || '',
-        updatedAt: data.updatedAt || ''
-      });
-    });
-    
-    console.log(`✅ Loaded ${businesses.length} businesses from Firebase`);
-    return businesses;
-  } catch (error) {
-    console.error('❌ Error loading businesses from Firebase:', error);
-    throw new Error('Failed to load businesses. Please check your internet connection.');
-  }
-};
-
-/**
- * Load a single business by ID
- */
-export const loadBusinessById = async (businessId: string): Promise<FirebaseBusiness | null> => {
-  try {
-    console.log(`Loading business: ${businessId}`);
-    
-    const businessDoc = doc(db, 'businesses', businessId);
-    const snapshot = await getDoc(businessDoc);
-    
-    if (snapshot.exists()) {
-      const data = snapshot.data() as DocumentData;
-      const business: FirebaseBusiness = {
-        id: snapshot.id,
-        name: data.name || '',
-        address: data.address || '',
-        description: data.description || '',
-        website: data.website,
-        tags: data.tags || [],
-        socialLinks: data.socialLinks || [],
-        image: data.image,
-        createdAt: data.createdAt || '',
-        updatedAt: data.updatedAt || ''
-      };
-      
-      console.log(`✅ Loaded business: ${business.name}`);
-      return business;
-    } else {
-      console.log(`❌ Business not found: ${businessId}`);
-      return null;
-    }
-  } catch (error) {
-    console.error('❌ Error loading business:', error);
-    throw new Error('Failed to load business details.');
-  }
-};
-
-// ==========================================
-// COMBINED LOADING FUNCTIONS
-// ==========================================
-
-/**
- * Load events and businesses together (Firebase only - no AsyncStorage fallback)
- * Returns both events with business names attached
- */
-export const loadEventsAndBusinesses = async (): Promise<{
-  events: (FirebaseEvent & { businessName: string })[];
-  businesses: FirebaseBusiness[];
-}> => {
-  try {
-    console.log('Loading events and businesses from Firebase...');
-    
-    // Load both in parallel for speed
-    const [events, businesses] = await Promise.all([
-      loadEventsFromFirebase(),
-      loadBusinessesFromFirebase()
-    ]);
-    
-    // Create a map of business ID to business name for quick lookup
-    const businessMap = new Map<string, string>();
-    businesses.forEach(business => {
-      businessMap.set(business.id, business.name);
-    });
-    
-    // Add business names to events
-    const eventsWithBusinessNames = events.map(event => ({
-      ...event,
-      businessName: businessMap.get(event.businessId) || 'Unknown Business'
-    }));
-    
-    console.log(`✅ Loaded ${eventsWithBusinessNames.length} events and ${businesses.length} businesses`);
-    
-    return {
-      events: eventsWithBusinessNames,
-      businesses
-    };
-  } catch (error) {
-    console.error('❌ Error loading events and businesses:', error);
-    throw new Error('Failed to load data. Please check your internet connection.');
-  }
-};
 
 // ==========================================
 // UTILITY FUNCTIONS
@@ -355,7 +62,6 @@ export const loadEventsAndBusinesses = async (): Promise<{
  */
 export const checkFirebaseConnection = async (): Promise<boolean> => {
   try {
-    // Try to read from a collection to test connection
     const testCollection = collection(db, 'businesses');
     const testQuery = query(testCollection, limit(1));
     await getDocs(testQuery);
@@ -369,7 +75,110 @@ export const checkFirebaseConnection = async (): Promise<boolean> => {
 };
 
 // ==========================================
-// EVENT SAVE FUNCTIONS FOR ADMIN DASHBOARD
+// FILE MANAGEMENT FUNCTIONS
+// ==========================================
+
+/**
+ * Upload file to Firebase Storage
+ */
+export const uploadToFirebaseStorage = async (uri: string, filename: string): Promise<string> => {
+  try {
+    console.log('Uploading file to Firebase Storage:', { uri, filename });
+    
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    
+    const storageRef = ref(storage, `events/${filename}`);
+    
+    const uploadResult = await uploadBytes(storageRef, blob);
+    const downloadURL = await getDownloadURL(uploadResult.ref);
+    
+    console.log('✅ File uploaded successfully:', downloadURL);
+    return downloadURL;
+  } catch (error) {
+    console.error('❌ Error uploading file to Firebase Storage:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete a file from Firebase Storage
+ */
+export const deleteFileFromFirebaseStorage = async (fileUrl: string): Promise<void> => {
+  try {
+    if (!fileUrl || !fileUrl.includes('firebase')) {
+      console.log('Not a Firebase Storage file, skipping:', fileUrl);
+      return;
+    }
+
+    // Extract file path from Firebase Storage URL
+    const url = new URL(fileUrl);
+    let filePath = url.pathname.match(/\/o\/(.+?)(\?|$)/)?.[1];
+    
+    if (filePath) {
+      filePath = decodeURIComponent(filePath);
+      console.log('🗑️ Deleting file from Firebase Storage:', filePath);
+      
+      const fileRef = ref(storage, filePath);
+      await deleteObject(fileRef);
+      
+      console.log('✅ File deleted successfully:', filePath);
+    } else {
+      console.warn('Could not extract file path from URL:', fileUrl);
+    }
+  } catch (error) {
+    console.error('❌ Error deleting file from Firebase Storage:', error);
+    console.log('ℹ️ File may have already been deleted or never existed - continuing');
+    // Don't throw error - event deletion should proceed
+    return;
+  }
+};
+
+/**
+ * Smart media cleanup - only delete COMPRESSED files when no other events use them
+ */
+const handleMediaCleanup = async (mediaUrl: string, deletedEventData: any): Promise<void> => {
+  try {
+    // Only handle compressed files or images (originals are already deleted by Cloud Functions)
+    if (!mediaUrl.includes('_compressed') && 
+        !mediaUrl.includes('.jpg') && 
+        !mediaUrl.includes('.jpeg') && 
+        !mediaUrl.includes('.png') &&
+        !mediaUrl.includes('.webp')) {
+      console.log('📎 Not a compressed file or image - skipping cleanup (original was already deleted by Cloud Function)');
+      return;
+    }
+    
+    // Check if this is part of a recurring series
+    if (deletedEventData.recurringSeriesId) {
+      // Check if any other events in the series still exist
+      const seriesQuery = query(
+        collection(db, 'events'),
+        where('recurringSeriesId', '==', deletedEventData.recurringSeriesId)
+      );
+      
+      const seriesSnap = await getDocs(seriesQuery);
+      
+      if (!seriesSnap.empty) {
+        console.log(`📎 Compressed file kept - ${seriesSnap.size} other events in series still exist`);
+        return; // Don't delete compressed file - other events still use it
+      }
+      
+      console.log('🗑️ Last event in series deleted - cleaning up compressed file');
+    }
+    
+    // Delete the compressed file (originals were already cleaned up by Cloud Functions)
+    await deleteFileFromFirebaseStorage(mediaUrl);
+    console.log('✅ Compressed file deleted successfully');
+    
+  } catch (error) {
+    console.error('❌ Error during compressed file cleanup:', error);
+    // Don't throw - event deletion succeeded even if media cleanup failed
+  }
+};
+
+// ==========================================
+// EVENT FUNCTIONS
 // ==========================================
 
 /**
@@ -389,6 +198,9 @@ export const saveEventToFirebase = async (event: Omit<FirebaseEvent, 'createdAt'
       tags: event.tags || [],
       image: event.image || null,
       video: event.video || null,
+      recurringSeriesId: event.recurringSeriesId || null,
+      recurringIndex: event.recurringIndex || null,
+      totalRecurringEvents: event.totalRecurringEvents || null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -402,17 +214,59 @@ export const saveEventToFirebase = async (event: Omit<FirebaseEvent, 'createdAt'
 };
 
 /**
- * Delete event from Firebase (for admin dashboard)
+ * Delete event from Firebase with smart compressed file cleanup
  */
 export const deleteEventFromFirebase = async (eventId: string): Promise<void> => {
   try {
     console.log('Deleting event from Firebase:', eventId);
     const eventDoc = doc(db, 'events', eventId);
+    const eventSnap = await getDoc(eventDoc);
     
+    if (!eventSnap.exists()) {
+      throw new Error('Event not found');
+    }
+    
+    const eventData = eventSnap.data();
+    const mediaUrl = eventData.image || eventData.video;
+    
+    // Delete the event document first
     await deleteDoc(eventDoc);
+    console.log('✅ Event document deleted from Firestore');
+    
+    // Handle compressed file cleanup (originals already deleted by Cloud Functions)
+    if (mediaUrl) {
+      await handleMediaCleanup(mediaUrl, eventData);
+    }
+    
     console.log('✅ Event deleted from Firebase successfully');
   } catch (error) {
     console.error('❌ Error deleting event from Firebase:', error);
+    throw error;
+  }
+};
+
+/**
+ * Load events for a specific business
+ */
+export const loadEventsForBusiness = async (businessId: string): Promise<FirebaseEvent[]> => {
+  try {
+    console.log('Loading events for business:', businessId);
+    const eventsQuery = query(
+      collection(db, 'events'),
+      where('businessId', '==', businessId)
+    );
+    
+    const eventsSnap = await getDocs(eventsQuery);
+    const events: FirebaseEvent[] = [];
+    
+    eventsSnap.forEach(doc => {
+      events.push({ id: doc.id, ...doc.data() } as FirebaseEvent);
+    });
+    
+    console.log(`✅ Loaded ${events.length} events for business`);
+    return events;
+  } catch (error) {
+    console.error('❌ Error loading events for business:', error);
     throw error;
   }
 };
@@ -438,6 +292,9 @@ export const savePendingEvent = async (eventData: Omit<FirebaseEvent, 'createdAt
       tags: eventData.tags || [],
       ...(eventData.image && { image: eventData.image }),
       ...(eventData.video && { video: eventData.video }),
+      recurringSeriesId: eventData.recurringSeriesId || null,
+      recurringIndex: eventData.recurringIndex || null,
+      totalRecurringEvents: eventData.totalRecurringEvents || null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -451,49 +308,49 @@ export const savePendingEvent = async (eventData: Omit<FirebaseEvent, 'createdAt
 };
 
 /**
- * Load pending events for a specific business (dashboard only)
+ * Load pending events for a specific business
  */
 export const loadPendingEventsForBusiness = async (businessId: string): Promise<FirebaseEvent[]> => {
   try {
     console.log('Loading pending events for business:', businessId);
-    
-    const pendingEventsRef = collection(db, 'pending-events');
-    const q = query(
-      pendingEventsRef,
-      where('businessId', '==', businessId),
-      orderBy('date', 'desc')
+    const pendingEventsQuery = query(
+      collection(db, 'pending-events'),
+      where('businessId', '==', businessId)
     );
     
-    const querySnapshot = await getDocs(q);
+    const pendingEventsSnap = await getDocs(pendingEventsQuery);
     const pendingEvents: FirebaseEvent[] = [];
     
-    querySnapshot.forEach((doc) => {
-      const data = doc.data() as DocumentData;
-      pendingEvents.push({
-        id: doc.id,
-        businessId: data.businessId,
-        title: data.title,
-        caption: data.caption,
-        date: data.date,
-        link: data.link,
-        tags: data.tags || [],
-        image: data.image,
-        video: data.video,
-        createdAt: data.createdAt,
-        updatedAt: data.updatedAt
-      });
+    pendingEventsSnap.forEach(doc => {
+      pendingEvents.push({ id: doc.id, ...doc.data() } as FirebaseEvent);
     });
     
-    console.log(`✅ Loaded ${pendingEvents.length} pending events for business ${businessId}`);
+    console.log(`✅ Loaded ${pendingEvents.length} pending events for business`);
     return pendingEvents;
   } catch (error) {
-    console.error('❌ Error loading pending events from Firebase:', error);
+    console.error('❌ Error loading pending events for business:', error);
     throw error;
   }
 };
 
 /**
- * Move event from pending-events to events collection (when compression complete)
+ * Delete event from pending-events collection
+ */
+export const deletePendingEvent = async (eventId: string): Promise<void> => {
+  try {
+    console.log('Deleting pending event from Firebase:', eventId);
+    const eventDoc = doc(db, 'pending-events', eventId);
+    
+    await deleteDoc(eventDoc);
+    console.log('✅ Pending event deleted from Firebase successfully');
+  } catch (error) {
+    console.error('❌ Error deleting pending event from Firebase:', error);
+    throw error;
+  }
+};
+
+/**
+ * Move pending event to live events with compressed video URL
  */
 export const movePendingEventToLive = async (eventId: string, compressedVideoUrl: string): Promise<void> => {
   try {
@@ -531,74 +388,200 @@ export const movePendingEventToLive = async (eventId: string, compressedVideoUrl
   }
 };
 
+// ==========================================
+// RECURRING EVENTS FUNCTIONS
+// ==========================================
+
 /**
- * Delete event from pending-events collection
+ * Generate recurring event instances
  */
-export const deletePendingEvent = async (eventId: string): Promise<void> => {
-  try {
-    console.log('Deleting pending event from Firebase:', eventId);
-    const eventDoc = doc(db, 'pending-events', eventId);
+export const generateRecurringEvents = (baseEvent: Omit<FirebaseEvent, 'createdAt' | 'updatedAt'>, recurrenceData: {
+  type: 'daily' | 'weekly' | 'custom';
+  count?: number;
+  customDates?: Date[];
+}): Omit<FirebaseEvent, 'createdAt' | 'updatedAt'>[] => {
+  const events: Omit<FirebaseEvent, 'createdAt' | 'updatedAt'>[] = [];
+
+  if (recurrenceData.type === 'custom' && recurrenceData.customDates) {
+    // Custom dates
+    recurrenceData.customDates.forEach((date, index) => {
+      events.push({
+        ...baseEvent,
+        id: `${baseEvent.id}_custom_${index}`,
+        date: date.toISOString(),
+        recurringSeriesId: baseEvent.id,
+        recurringIndex: index,
+        totalRecurringEvents: recurrenceData.customDates!.length,
+      });
+    });
+  } else {
+    // Daily/Weekly
+    const baseDate = new Date(baseEvent.date);
+    const count = recurrenceData.count || 1;
     
-    await deleteDoc(eventDoc);
-    console.log('✅ Pending event deleted from Firebase successfully');
+    for (let i = 0; i < count; i++) {
+      const eventDate = new Date(baseDate);
+      
+      if (recurrenceData.type === 'daily') {
+        eventDate.setDate(baseDate.getDate() + i);
+      } else if (recurrenceData.type === 'weekly') {
+        eventDate.setDate(baseDate.getDate() + (i * 7));
+      }
+      
+      events.push({
+        ...baseEvent,
+        id: `${baseEvent.id}_${i}`,
+        date: eventDate.toISOString(),
+        recurringSeriesId: baseEvent.id,
+        recurringIndex: i,
+        totalRecurringEvents: count,
+      });
+    }
+  }
+  
+  return events;
+};
+
+/**
+ * Save recurring events with shared media
+ */
+export const saveRecurringEventsToFirebase = async (events: Omit<FirebaseEvent, 'createdAt' | 'updatedAt'>[]): Promise<void> => {
+  try {
+    const batch = writeBatch(db);
+    
+    events.forEach(event => {
+      const eventDoc = doc(db, 'events', event.id);
+      batch.set(eventDoc, {
+        ...event,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    });
+    
+    await batch.commit();
+    console.log('✅ Recurring events saved to Firebase successfully');
   } catch (error) {
-    console.error('❌ Error deleting pending event from Firebase:', error);
+    console.error('❌ Error saving recurring events to Firebase:', error);
     throw error;
   }
 };
 
 /**
- * Delete a file from Firebase Storage
+ * Save recurring pending events (for video processing)
  */
-export const deleteFileFromFirebaseStorage = async (fileUrl: string): Promise<void> => {
+export const saveRecurringPendingEvents = async (events: Omit<FirebaseEvent, 'createdAt' | 'updatedAt'>[]): Promise<void> => {
   try {
-    if (!fileUrl || !fileUrl.includes('firebase')) {
-      console.log('Not a Firebase Storage file, skipping:', fileUrl);
-      return;
-    }
-
-    // Extract file path from Firebase Storage URL
-    const url = new URL(fileUrl);
-    let filePath = url.pathname.match(/\/o\/(.+?)$/)?.[1];
+    const batch = writeBatch(db);
     
-    if (filePath) {
-      filePath = decodeURIComponent(filePath);
-      console.log('🗑️ Deleting file from Firebase Storage:', filePath);
-      
-      const fileRef = ref(storage, filePath);
-      await deleteObject(fileRef);
-      
-      console.log('✅ File deleted successfully:', filePath);
-    } else {
-      console.warn('Could not extract file path from URL:', fileUrl);
-    }
+    events.forEach(event => {
+      const eventDoc = doc(db, 'pending-events', event.id);
+      batch.set(eventDoc, {
+        ...event,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    });
+    
+    await batch.commit();
+    console.log('✅ Recurring pending events saved to Firebase successfully');
   } catch (error) {
-    console.error('❌ Error deleting file from Firebase Storage:', error);
-    console.log('ℹ️ File may have already been deleted or never existed - continuing with event deletion');
-    // Don't throw error - event deletion should proceed
-    return; // Just return, don't throw
+    console.error('❌ Error saving recurring pending events to Firebase:', error);
+    throw error;
+  }
+};
+
+// ==========================================
+// BUSINESS FUNCTIONS
+// ==========================================
+
+/**
+ * Save business information to Firebase
+ */
+export const saveBusinessToFirebase = async (businessData: any, businessId: string): Promise<void> => {
+  try {
+    console.log('Saving business to Firebase:', businessId);
+    const businessDoc = doc(db, 'businesses', businessId);
+    
+    const data: any = {
+      name: businessData.name,
+      address: businessData.address,
+      description: businessData.description,
+      website: businessData.website || null,
+      tags: businessData.tags ? businessData.tags.split(',').map((tag: string) => tag.trim()) : [],
+      socialLinks: businessData.socialLinks ? businessData.socialLinks.split(',').map((link: string) => link.trim()) : [],
+      image: businessData.image || null,
+      updatedAt: new Date().toISOString()
+    };
+    
+    const existingDoc = await getDoc(businessDoc);
+    if (!existingDoc.exists()) {
+      data.createdAt = new Date().toISOString();
+    }
+    
+    await setDoc(businessDoc, data, { merge: true });
+    console.log('✅ Business saved to Firebase successfully');
+  } catch (error) {
+    console.error('❌ Error saving business to Firebase:', error);
+    throw error;
   }
 };
 
 /**
- * Delete both original and compressed video files
+ * Load business data from Firebase
  */
-export const deleteVideoFiles = async (videoUrl: string): Promise<void> => {
+export const loadBusinessFromFirebase = async (businessId: string): Promise<FirebaseBusiness | null> => {
   try {
-    // Delete the main video file
-    await deleteFileFromFirebaseStorage(videoUrl);
+    console.log('Loading business from Firebase:', businessId);
+    const businessDoc = doc(db, 'businesses', businessId);
+    const businessSnap = await getDoc(businessDoc);
     
-    // Also try to delete compressed version if it exists
-    if (videoUrl.includes('_compressed')) {
-      // This is already compressed, try to delete original too
-      const originalUrl = videoUrl.replace('_compressed.mp4', '.mp4');
-      await deleteFileFromFirebaseStorage(originalUrl);
+    if (businessSnap.exists()) {
+      const business = { id: businessSnap.id, ...businessSnap.data() } as FirebaseBusiness;
+      console.log('✅ Business loaded from Firebase successfully');
+      return business;
     } else {
-      // This might be original, try to delete compressed version too
-      const compressedUrl = videoUrl.replace(/\.(mp4|mov|m4v)$/i, '_compressed.mp4');
-      await deleteFileFromFirebaseStorage(compressedUrl);
+      console.log('No business found with ID:', businessId);
+      return null;
     }
   } catch (error) {
-    console.error('Error deleting video files:', error);
+    console.error('❌ Error loading business from Firebase:', error);
+    throw error;
+  }
+};
+
+// ==========================================
+// COMBINED LOAD FUNCTIONS
+// ==========================================
+
+/**
+ * Load events and businesses from Firebase (for main app)
+ */
+export const loadEventsAndBusinesses = async (): Promise<{
+  events: FirebaseEvent[];
+  businesses: FirebaseBusiness[];
+}> => {
+  try {
+    console.log('Loading events and businesses from Firebase...');
+    
+    const [eventsSnap, businessesSnap] = await Promise.all([
+      getDocs(collection(db, 'events')),
+      getDocs(collection(db, 'businesses'))
+    ]);
+    
+    const events: FirebaseEvent[] = [];
+    eventsSnap.forEach(doc => {
+      events.push({ id: doc.id, ...doc.data() } as FirebaseEvent);
+    });
+    
+    const businesses: FirebaseBusiness[] = [];
+    businessesSnap.forEach(doc => {
+      businesses.push({ id: doc.id, ...doc.data() } as FirebaseBusiness);
+    });
+    
+    console.log(`✅ Loaded ${events.length} events and ${businesses.length} businesses from Firebase`);
+    return { events, businesses };
+  } catch (error) {
+    console.error('❌ Error loading events and businesses from Firebase:', error);
+    throw new Error('Please check your internet connection.');
   }
 };
