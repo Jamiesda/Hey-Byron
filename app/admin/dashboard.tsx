@@ -1,13 +1,14 @@
-// app/admin/dashboard.tsx - Refactored to use extracted components
+// app/admin/dashboard.tsx - Updated with recurring events and fixed undefined values
 // @ts-nocheck
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Location from 'expo-location';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   ImageBackground,
   KeyboardAvoidingView,
   Platform,
@@ -21,7 +22,7 @@ import {
 
 // Import extracted constants and utilities
 import { isImage, isVideo } from '../../constants/fileConfig';
-import { formatWebsiteUrl, validateBusinessData, validateEventData } from '../../constants/validation';
+import { validateBusinessData, validateEventData } from '../../constants/validation';
 import { getErrorMessage } from '../../utils/errorHandling';
 
 // Import Firebase functions
@@ -29,10 +30,14 @@ import {
   FirebaseEvent,
   deleteEventFromFirebase,
   deletePendingEvent,
+  generateRecurringEvents,
+  loadBusinessFromFirebase,
   loadEventsForBusiness,
   loadPendingEventsForBusiness,
+  saveBusinessToFirebase,
   saveEventToFirebase,
   savePendingEvent,
+  saveRecurringEventsToFirebase,
   uploadToFirebaseStorage
 } from '../../utils/firebaseUtils';
 
@@ -41,8 +46,6 @@ import { BusinessForm, BusinessFormData } from '../../components/business';
 import { EventForm, EventFormData, EventsList, UploadState } from '../../components/events';
 
 // Firebase imports
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
 
 const backgroundPattern = require('../../assets/logo3.png');
 const heyByronBlackLogo = require('../../assets/hey.byronblack.png');
@@ -84,37 +87,39 @@ export default function DashboardScreen() {
     isUploading: false,
     progress: 0,
     error: null,
-    isComplete: true,
+    isComplete: true
   });
 
   // Events data
-  const [bizEvents, setBizEvents] = useState<FirebaseEvent[]>([]);
+  const [events, setEvents] = useState<FirebaseEvent[]>([]);
   const [pendingEvents, setPendingEvents] = useState<FirebaseEvent[]>([]);
 
-  // Load data on mount
   useEffect(() => {
-    (async () => {
-      try {
-        const businessCode = await AsyncStorage.getItem('businessCode');
-        if (!businessCode) {
-          router.replace('/admin/login');
-          return;
-        }
+    checkBusinessAccess();
+  }, []);
 
-        setCode(businessCode);
-        await loadData(businessCode);
-      } catch (error) {
-        console.error('Error loading data:', error);
-        Alert.alert('Error', 'Failed to load data');
-      } finally {
-        setLoading(false);
+  const checkBusinessAccess = async () => {
+    try {
+      const businessCode = await AsyncStorage.getItem('businessCode');
+      const isBusiness = await AsyncStorage.getItem('isBusiness');
+      
+      if (!businessCode || !isBusiness) {
+        router.replace('/admin/login');
+        return;
       }
-    })();
-  }, [router]);
+      
+      setCode(businessCode);
+      await loadData(businessCode);
+    } catch (error) {
+      console.error('Error checking business access:', error);
+      router.replace('/admin/login');
+    }
+  };
 
-  // Load all data for the business
   const loadData = async (businessCode: string) => {
     try {
+      setLoading(true);
+      
       // Load business data
       const business = await loadBusinessFromFirebase(businessCode);
       if (business) {
@@ -122,24 +127,27 @@ export default function DashboardScreen() {
           name: business.name,
           address: business.address,
           description: business.description,
-          tags: Array.isArray(business.tags) ? business.tags.join(', ') : '',
-          website: business.website,
-          socialLinks: Array.isArray(business.socialLinks) ? business.socialLinks.join(', ') : '',
+          tags: business.tags.join(', '),
+          website: business.website || '',
+          socialLinks: business.socialLinks?.join(', ') || '',
           image: business.image,
         });
       }
 
-      // Load events
-      const [events, pending] = await Promise.all([
+      // Load events and pending events
+      const [eventsData, pendingEventsData] = await Promise.all([
         loadEventsForBusiness(businessCode),
-        loadPendingEventsForBusiness(businessCode),
+        loadPendingEventsForBusiness(businessCode)
       ]);
+
+      setEvents(eventsData);
+      setPendingEvents(pendingEventsData);
       
-      setBizEvents(events);
-      setPendingEvents(pending);
     } catch (error) {
-      console.error('Error loading business data:', error);
-      throw error;
+      console.error('Error loading data:', error);
+      Alert.alert('Error', 'Failed to load dashboard data');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -150,7 +158,6 @@ export default function DashboardScreen() {
 
   const handleBusinessImageSelected = async (uri: string) => {
     try {
-      // Upload image to Firebase Storage
       const ext = uri.split('.').pop() || 'jpg';
       const filename = `business_${Date.now()}.${ext}`;
       const uploadedUrl = await uploadToFirebaseStorage(uri, filename);
@@ -226,6 +233,10 @@ export default function DashboardScreen() {
         date: eventData.date,
         link: eventData.link,
         interests: eventData.interests,
+        isRecurring: eventData.isRecurring,
+        recurrenceType: eventData.recurrenceType,
+        recurrenceCount: eventData.recurrenceCount,
+        customDates: eventData.customDates,
       });
 
       if (errors.length > 0) {
@@ -233,32 +244,55 @@ export default function DashboardScreen() {
         return;
       }
 
-      // Create event object
-      const eventToSave: Omit<FirebaseEvent, 'createdAt' | 'updatedAt'> = {
+      // Create clean event object (NO undefined values for Firebase)
+      const baseEvent: Omit<FirebaseEvent, 'createdAt' | 'updatedAt'> = {
         id: editingEventId || `${code}_${Date.now()}`,
         businessId: code!,
         title: eventData.title.trim(),
-        caption: eventData.caption.trim() || undefined,
+        caption: eventData.caption.trim() || '', // Empty string instead of undefined
         date: eventData.date.toISOString(),
-        link: eventData.link.trim() ? formatWebsiteUrl(eventData.link.trim()) : undefined,
+        link: eventData.link.trim(), // Now mandatory, so always has value
         tags: eventData.interests,
-        image: isImage(eventData.image) ? eventData.image : undefined,
-        video: isVideo(eventData.image) ? eventData.image : undefined,
+        // Only include image/video if they exist, otherwise exclude entirely
+        ...(eventData.image && isImage(eventData.image) && { image: eventData.image }),
+        ...(eventData.image && isVideo(eventData.image) && { video: eventData.image }),
       };
 
-      // Save event
-      if (eventData.video && isVideo(eventData.video)) {
-        await savePendingEvent(eventToSave);
+      // Handle recurring events
+      if (eventData.isRecurring && eventData.recurrenceType) {
+        let recurringEvents;
+        
+        if (eventData.recurrenceType === 'custom' && eventData.customDates) {
+          recurringEvents = generateRecurringEvents(baseEvent, {
+            type: 'custom',
+            customDates: eventData.customDates
+          });
+          
+          await saveRecurringEventsToFirebase(recurringEvents);
+          Alert.alert('Success', `${eventData.customDates.length} custom events created successfully!`);
+          
+        } else if (eventData.recurrenceCount) {
+          recurringEvents = generateRecurringEvents(baseEvent, {
+            type: eventData.recurrenceType,
+            count: eventData.recurrenceCount
+          });
+          
+          await saveRecurringEventsToFirebase(recurringEvents);
+          Alert.alert('Success', `${eventData.recurrenceCount} ${eventData.recurrenceType} events created successfully!`);
+        }
       } else {
-        await saveEventToFirebase(eventToSave);
+        // Single event
+        if (eventData.image && isVideo(eventData.image)) {
+          await savePendingEvent(baseEvent);
+        } else {
+          await saveEventToFirebase(baseEvent);
+        }
+        Alert.alert('Success', 'Event saved successfully!');
       }
 
-      // Reload data
+      // Reload data and reset form
       await loadData(code!);
-
-      // Reset form
       resetEventForm();
-      Alert.alert('Success', 'Event saved successfully!');
 
     } catch (error) {
       console.error('Error saving event:', error);
@@ -310,25 +344,51 @@ export default function DashboardScreen() {
   };
 
   const handleDeleteEvent = async (eventId: string) => {
-    try {
-      await deleteEventFromFirebase(eventId);
-      await loadData(code!);
-      Alert.alert('Success', 'Event deleted');
-    } catch (error) {
-      console.error('Error deleting event:', error);
-      Alert.alert('Error', 'Failed to delete event');
-    }
+    Alert.alert(
+      'Delete Event',
+      'Are you sure you want to delete this event?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteEventFromFirebase(eventId);
+              await loadData(code!);
+              Alert.alert('Success', 'Event deleted successfully');
+            } catch (error) {
+              console.error('Error deleting event:', error);
+              Alert.alert('Error', 'Failed to delete event');
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleDeletePendingEvent = async (eventId: string) => {
-    try {
-      await deletePendingEvent(eventId);
-      await loadData(code!);
-      Alert.alert('Success', 'Pending event deleted');
-    } catch (error) {
-      console.error('Error deleting pending event:', error);
-      Alert.alert('Error', 'Failed to delete pending event');
-    }
+    Alert.alert(
+      'Delete Event',
+      'Are you sure you want to delete this event?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deletePendingEvent(eventId);
+              await loadData(code!);
+              Alert.alert('Success', 'Event deleted successfully');
+            } catch (error) {
+              console.error('Error deleting event:', error);
+              Alert.alert('Error', 'Failed to delete event');
+            }
+          }
+        }
+      ]
+    );
   };
 
   // Render loading state
@@ -342,11 +402,20 @@ export default function DashboardScreen() {
   }
 
   return (
-    <ImageBackground source={backgroundPattern} style={styles.background} resizeMode="cover">
+    <ImageBackground 
+      source={backgroundPattern} 
+      style={styles.background}
+      resizeMode="repeat"
+    >
+      <LinearGradient 
+        colors={['rgba(0, 0, 0, 0.8)', 'rgba(0, 0, 0, 0.95)']} 
+        style={StyleSheet.absoluteFillObject}
+      />
+      
       <SafeAreaView style={styles.safe}>
         {/* Logo Button */}
         <TouchableOpacity style={styles.logoButton} onPress={() => router.replace('/')}>
-          <ImageBackground source={heyByronBlackLogo} style={styles.logoImage} />
+          <Image source={heyByronBlackLogo} style={styles.logoImage} resizeMode="contain" />
         </TouchableOpacity>
 
         <KeyboardAvoidingView
@@ -364,6 +433,9 @@ export default function DashboardScreen() {
               loading={savingBiz}
               onDataChange={handleBusinessDataChange}
               onImageSelected={handleBusinessImageSelected}
+              onImageDeleted={() => {
+                console.log('Business image deleted');
+              }}
             />
 
             {/* Events Section */}
@@ -403,7 +475,7 @@ export default function DashboardScreen() {
 
               {/* Events List */}
               <EventsList
-                events={bizEvents}
+                events={events}
                 pendingEvents={pendingEvents}
                 onEdit={handleEditEvent}
                 onDelete={handleDeleteEvent}
@@ -417,76 +489,6 @@ export default function DashboardScreen() {
   );
 }
 
-// Helper functions
-const loadBusinessFromFirebase = async (businessId: string) => {
-  try {
-    const businessDoc = doc(db, 'businesses', businessId);
-    const businessSnap = await getDoc(businessDoc);
-    
-    if (businessSnap.exists()) {
-      const data = businessSnap.data();
-      return {
-        id: businessSnap.id,
-        name: data.name || '',
-        address: data.address || '',
-        description: data.description || '',
-        tags: data.tags || [],
-        website: data.website || '',
-        socialLinks: data.socialLinks || [],
-        image: data.image || undefined,
-        coordinates: data.coordinates || undefined,
-      };
-    }
-    return null;
-  } catch (error) {
-    console.error('Error loading business from Firebase:', error);
-    throw error;
-  }
-};
-
-const saveBusinessToFirebase = async (business: BusinessFormData, businessId: string) => {
-  try {
-    const businessDoc = doc(db, 'businesses', businessId);
-    
-    // Geocode address
-    let coordinates = null;
-    if (business.address) {
-      try {
-        const geocoded = await Location.geocodeAsync(business.address.trim());
-        if (geocoded && geocoded.length > 0) {
-          coordinates = {
-            latitude: geocoded[0].latitude,
-            longitude: geocoded[0].longitude
-          };
-        }
-      } catch (error) {
-        console.warn('Could not geocode address:', error);
-      }
-    }
-    
-    // Prepare data
-    const businessDataToSave: any = {
-      name: business.name,
-      address: business.address,
-      description: business.description,
-      tags: business.tags.split(',').map(t => t.trim()).filter(Boolean),
-      website: business.website,
-      socialLinks: business.socialLinks.split(',').map(t => t.trim()).filter(Boolean),
-      coordinates,
-      updatedAt: new Date().toISOString(),
-    };
-    
-    if (business.image) {
-      businessDataToSave.image = business.image;
-    }
-    
-    await setDoc(businessDoc, businessDataToSave);
-  } catch (error) {
-    console.error('Error saving business to Firebase:', error);
-    throw error;
-  }
-};
-
 const styles = StyleSheet.create({
   background: {
     flex: 1,
@@ -498,14 +500,14 @@ const styles = StyleSheet.create({
   },
   logoButton: {
     position: 'absolute',
-    left: 20,
+    left: 20,  // Changed from right to left
     top: Platform.OS === 'ios' ? 60 : 40,
     padding: 8,
     zIndex: 10,
   },
   logoImage: {
-    width: 150,
-    height: 24,
+    width: 150,  // Changed from 120 to 150
+    height: 24,  // Changed from 20 to 24
   },
   loadingContainer: {
     flex: 1,
@@ -521,12 +523,12 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    marginTop: 40,
+    marginTop: 50,  // Increased from 40 to 100 to account for logo height
   },
   scrollContent: {
     paddingHorizontal: 24,
     paddingBottom: 40,
-    paddingTop: 20,
+    paddingTop: 40,  // Reduced from 120 to 40 to move content higher
   },
   card: {
     backgroundColor: 'rgba(255,255,255,0.1)',

@@ -1,10 +1,11 @@
 // components/events/EventForm.tsx
-// Event form component extracted from dashboard.tsx
+// Event form component with fixed recurring events dropdown
 
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import React, { useState } from 'react';
 import {
+  Alert,
   Modal,
   StyleSheet,
   Switch,
@@ -88,10 +89,89 @@ export default function EventForm({
     });
   };
 
+  // Handle frequency selection with optimized state updates
+  const handleFrequencySelect = () => {
+    Alert.alert(
+      'Select Frequency',
+      'Choose how often to repeat this event',
+      [
+        {
+          text: 'Daily',
+          onPress: () => onDataChange({ 
+            recurrenceType: 'daily', 
+            recurrenceCount: 7, 
+            customDates: [] 
+          })
+        },
+        {
+          text: 'Weekly',
+          onPress: () => onDataChange({ 
+            recurrenceType: 'weekly', 
+            recurrenceCount: 4, 
+            customDates: [] 
+          })
+        },
+        {
+          text: 'Custom Dates',
+          onPress: () => onDataChange({ 
+            recurrenceType: 'custom', 
+            recurrenceCount: undefined, 
+            customDates: [eventData.date] 
+          })
+        },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
+
+  // Get display text for frequency
+  const getFrequencyDisplayText = () => {
+    if (!eventData.recurrenceType) return 'Select frequency...';
+    switch (eventData.recurrenceType) {
+      case 'daily': return 'Daily';
+      case 'weekly': return 'Weekly';
+      case 'custom': return 'Custom Dates';
+      default: return 'Select frequency...';
+    }
+  };
+
   // Check if all mandatory fields are filled
   const hasMandatoryFields = eventData.title.trim() && 
                             eventData.interests.length > 0 && 
-                            eventData.date;
+                            eventData.date &&
+                            eventData.link.trim() && // Added link as mandatory
+                            // Add recurring validation
+                            (!eventData.isRecurring || 
+                             (eventData.isRecurring && eventData.recurrenceType && 
+                              ((eventData.recurrenceType === 'custom' && eventData.customDates && eventData.customDates.length > 0) ||
+                               (eventData.recurrenceType !== 'custom' && eventData.recurrenceCount && eventData.recurrenceCount > 0))));
+
+  // Clean event data for Firebase (remove undefined values)
+  const getCleanEventData = () => {
+    const cleanData: any = {
+      title: eventData.title.trim(),
+      caption: eventData.caption.trim() || '',
+      link: eventData.link.trim(), // Now always included since it's mandatory
+      interests: eventData.interests,
+      date: eventData.date,
+      isRecurring: eventData.isRecurring,
+    };
+
+    // Only add optional fields if they have values
+    if (eventData.image) {
+      cleanData.image = eventData.image;
+    }
+
+    if (eventData.isRecurring) {
+      if (eventData.recurrenceType) cleanData.recurrenceType = eventData.recurrenceType;
+      if (eventData.recurrenceCount) cleanData.recurrenceCount = eventData.recurrenceCount;
+      if (eventData.customDates && eventData.customDates.length > 0) {
+        cleanData.customDates = eventData.customDates;
+      }
+    }
+
+    return cleanData;
+  };
 
   // Button should only be disabled if:
   // - Currently saving/loading
@@ -144,13 +224,22 @@ export default function EventForm({
             isComplete: false 
           });
         }}
+        onMediaDeleted={() => {
+          // Clear the image from event data when deleted
+          onDataChange({ image: undefined });
+          onUploadStateChange({
+            isComplete: true,
+            error: null
+          });
+        }}
+        showDeleteButton={true}
       />
 
       {/* Upload Progress Indicator */}
       {uploadState.isUploading && (
         <View style={styles.uploadProgress}>
           <Text style={styles.uploadProgressTitle}>
-            📤 Uploading video... {uploadState.progress}% complete
+            📤 Uploading media... {uploadState.progress}% complete
           </Text>
           <View style={styles.progressBar}>
             <View 
@@ -230,7 +319,7 @@ export default function EventForm({
       </View>
 
       <View style={styles.inputContainer}>
-        <Text style={styles.inputLabel}>Event Link</Text>
+        <Text style={styles.inputLabel}>Event Link *</Text>
         <TextInput
           style={styles.input}
           value={eventData.link}
@@ -293,12 +382,14 @@ export default function EventForm({
           <Switch
             value={eventData.isRecurring}
             onValueChange={(value) => {
-              handleFieldChange('isRecurring')(value);
-              if (!value) {
-                handleFieldChange('recurrenceType')(undefined);
-                handleFieldChange('recurrenceCount')(undefined);
-                handleFieldChange('customDates')([]);
-              }
+              onDataChange({ 
+                isRecurring: value,
+                ...(value ? {} : { 
+                  recurrenceType: undefined, 
+                  recurrenceCount: undefined, 
+                  customDates: [] 
+                })
+              });
             }}
             trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#4fc3f7' }}
             thumbColor={eventData.isRecurring ? '#fff' : 'rgba(255,255,255,0.5)'}
@@ -306,97 +397,88 @@ export default function EventForm({
         </View>
       </View>
 
+      {/* Recurring Options */}
       {eventData.isRecurring && (
-        <>
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>Repeat Frequency *</Text>
-            <View style={styles.recurrenceButtons}>
-              {['daily', 'weekly', 'custom'].map(type => (
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Repeat Frequency *</Text>
+          <TouchableOpacity
+            style={styles.frequencyButton}
+            onPress={handleFrequencySelect}
+          >
+            <Text style={styles.frequencyButtonText}>
+              {getFrequencyDisplayText()}
+            </Text>
+            <Ionicons name="chevron-down" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Number Input for Daily/Weekly */}
+      {eventData.isRecurring && (eventData.recurrenceType === 'daily' || eventData.recurrenceType === 'weekly') && (
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>
+            Number of events (Max: {eventData.recurrenceType === 'daily' ? '30' : '10'}) *
+          </Text>
+          <TextInput
+            style={styles.input}
+            value={eventData.recurrenceCount?.toString() || ''}
+            onChangeText={(text) => {
+              if (text === '') {
+                onDataChange({ recurrenceCount: undefined });
+                return;
+              }
+              
+              const num = parseInt(text);
+              if (!isNaN(num)) {
+                const max = eventData.recurrenceType === 'daily' ? 30 : 10;
+                onDataChange({ recurrenceCount: Math.min(Math.max(num, 1), max) });
+              }
+            }}
+            placeholder={eventData.recurrenceType === 'daily' ? "1-30" : "1-10"}
+            placeholderTextColor="rgba(255,255,255,0.5)"
+            keyboardType="numeric"
+            maxLength={2}
+          />
+        </View>
+      )}
+
+      {/* Custom Dates Section */}
+      {eventData.isRecurring && eventData.recurrenceType === 'custom' && (
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Custom Dates (Max: 10) *</Text>
+          <View style={styles.customDatesContainer}>
+            {(eventData.customDates || []).map((date, index) => (
+              <View key={index} style={styles.customDateItem}>
+                <Text style={styles.customDateText}>
+                  {formatDate(date)}
+                </Text>
                 <TouchableOpacity
-                  key={type}
-                  style={[
-                    styles.recurrenceButton,
-                    eventData.recurrenceType === type && styles.recurrenceButtonSelected
-                  ]}
                   onPress={() => {
-                    handleFieldChange('recurrenceType')(type);
-                    if (type === 'daily') handleFieldChange('recurrenceCount')(7);
-                    if (type === 'weekly') handleFieldChange('recurrenceCount')(4);
-                    if (type === 'custom') {
-                      handleFieldChange('recurrenceCount')(undefined);
-                      handleFieldChange('customDates')([eventData.date]);
-                    }
+                    const newDates = (eventData.customDates || []).filter((_, i) => i !== index);
+                    onDataChange({ customDates: newDates });
                   }}
                 >
-                  <Text style={[
-                    styles.recurrenceButtonText,
-                    eventData.recurrenceType === type && styles.recurrenceButtonTextSelected
-                  ]}>
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </Text>
+                  <Ionicons name="close-circle" size={20} color="#ff6b6b" />
                 </TouchableOpacity>
-              ))}
-            </View>
+              </View>
+            ))}
           </View>
 
-          {(eventData.recurrenceType === 'daily' || eventData.recurrenceType === 'weekly') && (
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>
-                Number of events (Max: {eventData.recurrenceType === 'daily' ? '30' : '10'}) *
+          {(!eventData.customDates || eventData.customDates.length < 10) && (
+            <TouchableOpacity
+              style={styles.addDateButton}
+              onPress={() => {
+                setTempCustomDate(new Date());
+                setShowCustomDateModal(true);
+              }}
+            >
+              <Ionicons name="add-circle-outline" size={20} color="#4fc3f7" />
+              <Text style={styles.addDateButtonText}>
+                Add Date ({(eventData.customDates || []).length}/10)
               </Text>
-              <TextInput
-                style={styles.input}
-                value={eventData.recurrenceCount?.toString() || ''}
-                onChangeText={(text) => {
-                  const num = parseInt(text) || 1;
-                  const max = eventData.recurrenceType === 'daily' ? 30 : 10;
-                  handleFieldChange('recurrenceCount')(Math.min(Math.max(num, 1), max));
-                }}
-                keyboardType="numeric"
-                maxLength={2}
-              />
-            </View>
+            </TouchableOpacity>
           )}
-
-          {eventData.recurrenceType === 'custom' && (
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Custom Dates (Max: 10) *</Text>
-              <View style={styles.customDatesContainer}>
-                {(eventData.customDates || []).map((date, index) => (
-                  <View key={index} style={styles.customDateItem}>
-                    <Text style={styles.customDateText}>
-                      {formatDate(date)}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const newDates = [...(eventData.customDates || [])];
-                        newDates.splice(index, 1);
-                        handleFieldChange('customDates')(newDates);
-                      }}
-                    >
-                      <Ionicons name="close-circle" size={20} color="#ff6b6b" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-
-              {(!eventData.customDates || eventData.customDates.length < 10) && (
-                <TouchableOpacity
-                  style={styles.addDateButton}
-                  onPress={() => {
-                    setTempCustomDate(new Date());
-                    setShowCustomDateModal(true);
-                  }}
-                >
-                  <Ionicons name="add-circle-outline" size={20} color="#4fc3f7" />
-                  <Text style={styles.addDateButtonText}>
-                    Add Date ({(eventData.customDates || []).length}/10)
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-        </>
+        </View>
       )}
 
       {/* Save Event Button */}
@@ -407,7 +489,7 @@ export default function EventForm({
         title={editingMode ? 'Update Event' : 'Save Event'}
         loadingTitle={
           loading ? 'Saving...' : 
-          uploadState.isUploading ? `Uploading video... ${uploadState.progress}%` : 
+          uploadState.isUploading ? `Uploading media... ${uploadState.progress}%` : 
           'Loading...'
         }
       />
@@ -476,7 +558,7 @@ export default function EventForm({
                     const currentDates = eventData.customDates || [];
                     if (currentDates.length < 10) {
                       const newDates = [...currentDates, tempCustomDate].sort((a, b) => a.getTime() - b.getTime());
-                      handleFieldChange('customDates')(newDates);
+                      onDataChange({ customDates: newDates });
                     }
                     setShowCustomDateModal(false);
                   }}
@@ -662,30 +744,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  recurrenceButtons: {
+  frequencyButton: {
     flexDirection: 'row',
-    gap: 8,
-  },
-  recurrenceButton: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
+    minHeight: 56,
   },
-  recurrenceButtonSelected: {
-    backgroundColor: '#fff',
-  },
-  recurrenceButtonText: {
+  frequencyButtonText: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  recurrenceButtonTextSelected: {
-    color: '#000',
+    fontSize: 16,
   },
   customDatesContainer: {
     gap: 8,

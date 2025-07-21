@@ -1,12 +1,12 @@
 // components/business/BusinessForm.tsx
-// Business form component extracted from dashboard.tsx
+// Business form component with delete functionality
 
 import React from 'react';
 import {
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { MAX_IMAGE_SIZE } from '../../constants/fileConfig';
 import { FormInput, LoadingButton, MediaPicker } from '../shared';
@@ -27,6 +27,7 @@ export interface BusinessFormProps {
   loading: boolean;
   onDataChange: (data: Partial<BusinessFormData>) => void;
   onImageSelected: (uri: string) => void;
+  onImageDeleted?: () => void; // NEW: Callback when image is deleted
 }
 
 export default function BusinessForm({
@@ -35,6 +36,7 @@ export default function BusinessForm({
   loading,
   onDataChange,
   onImageSelected,
+  onImageDeleted,
 }: BusinessFormProps) {
 
   const handleFieldChange = (field: keyof BusinessFormData) => (value: string) => {
@@ -44,15 +46,21 @@ export default function BusinessForm({
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Business Information</Text>
-      <Text style={styles.cloudIndicator}>✅ Synced with cloud</Text>
       
-      {/* Business Image Picker */}
+      
+      {/* Business Image Picker with Delete */}
       <MediaPicker
         onMediaSelected={onImageSelected}
         currentMedia={businessData.image}
         type="image"
         maxSize={MAX_IMAGE_SIZE}
         buttonText={businessData.image ? 'Change Business Image' : 'Add Business Image'}
+        onMediaDeleted={() => {
+          // Clear the image from business data when deleted
+          onDataChange({ image: undefined });
+          onImageDeleted?.();
+        }}
+        showDeleteButton={true}
       />
 
       {/* Business Form Fields */}
@@ -91,21 +99,24 @@ export default function BusinessForm({
           style={styles.input}
           value={businessData.tags}
           onChangeText={handleFieldChange('tags')}
-          placeholder="e.g. cafe, yoga, restaurant"
+          placeholder="e.g. restaurant, cafe, italian"
           placeholderTextColor="rgba(255,255,255,0.5)"
-          maxLength={200}
+          maxLength={100}
         />
+        <Text style={styles.helperText}>
+          Separate tags with commas (e.g. restaurant, cafe, italian)
+        </Text>
       </View>
 
       <FormInput
         label="Website"
         value={businessData.website}
         onChangeText={handleFieldChange('website')}
-        placeholder="yourwebsite.com"
-        maxLength={200}
+        placeholder="https://yourwebsite.com"
         autoCapitalize="none"
         autoCorrect={false}
-        required
+        keyboardType="url"
+        maxLength={200}
       />
 
       <View style={styles.inputContainer}>
@@ -114,15 +125,17 @@ export default function BusinessForm({
           style={styles.input}
           value={businessData.socialLinks}
           onChangeText={handleFieldChange('socialLinks')}
-          placeholder="https://facebook.com/..., https://instagram.com/..."
+          placeholder="https://instagram.com/yourbusiness, https://facebook.com/yourbusiness"
           placeholderTextColor="rgba(255,255,255,0.5)"
-          maxLength={500}
+          maxLength={300}
           autoCapitalize="none"
           autoCorrect={false}
         />
+        <Text style={styles.helperText}>
+          Separate multiple links with commas
+        </Text>
       </View>
 
-      {/* Save Business Button */}
       <LoadingButton
         onPress={onSave}
         loading={loading}
@@ -151,14 +164,13 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: '#fff',
-    marginBottom: 8,
     letterSpacing: 0.3,
+    marginBottom: 8,
   },
   cloudIndicator: {
     fontSize: 14,
-    color: 'rgba(0, 255, 0, 0.8)',
-    marginBottom: 16,
-    fontWeight: '500',
+    color: 'rgba(255,255,255,0.7)',
+    marginBottom: 20,
   },
   inputContainer: {
     marginBottom: 20,
@@ -180,4 +192,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.2)',
     minHeight: 56,
   },
-}); 
+  helperText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+    marginTop: 6,
+  },
+});

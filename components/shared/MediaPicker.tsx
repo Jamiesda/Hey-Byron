@@ -1,8 +1,10 @@
 // components/shared/MediaPicker.tsx
-// Reusable media picker component extracted from dashboard.tsx
+// Reusable media picker component with delete functionality
 
+import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import React from 'react';
 import {
   Alert,
@@ -14,7 +16,8 @@ import {
   ViewStyle
 } from 'react-native';
 import { isImage, isVideo } from '../../constants/fileConfig';
-import { uploadToFirebaseStorage } from '../../utils/firebaseUtils';
+import { db } from '../../firebaseConfig';
+import { deleteFileFromFirebaseStorage, uploadToFirebaseStorage } from '../../utils/firebaseUtils';
 
 export interface MediaPickerProps {
   onMediaSelected: (uri: string) => void;
@@ -27,6 +30,8 @@ export interface MediaPickerProps {
   onUploadProgress?: (progress: number) => void;
   onUploadComplete?: (url: string) => void;
   onUploadError?: (error: string) => void;
+  onMediaDeleted?: () => void; // NEW: Callback when media is deleted
+  showDeleteButton?: boolean; // NEW: Option to show/hide delete button
 }
 
 export default function MediaPicker({
@@ -40,6 +45,8 @@ export default function MediaPicker({
   onUploadProgress,
   onUploadComplete,
   onUploadError,
+  onMediaDeleted,
+  showDeleteButton = true, // Default to true
 }: MediaPickerProps) {
 
   // Helper function to get file size
@@ -62,20 +69,150 @@ export default function MediaPicker({
     }
   };
 
-  // Upload function
+  // Smart delete that checks if media is used by other events
+  const smartDeleteMedia = async (mediaUrl: string): Promise<boolean> => {
+    try {
+      if (!mediaUrl || !mediaUrl.includes('firebasestorage.googleapis.com')) {
+        return false;
+      }
+
+      // Check how many events are using this media file
+      const eventsCollection = collection(db, 'events');
+      const [imageQuery, videoQuery] = await Promise.all([
+        getDocs(query(eventsCollection, where('image', '==', mediaUrl))),
+        getDocs(query(eventsCollection, where('video', '==', mediaUrl)))
+      ]);
+
+      const totalUsage = imageQuery.docs.length + videoQuery.docs.length;
+      
+      if (totalUsage <= 1) {
+        // Safe to delete - only used by current event
+        await deleteFileFromFirebaseStorage(mediaUrl);
+        return true;
+      } else {
+        // Still used by other events - don't delete
+        console.log(`Media still used by ${totalUsage} events - keeping file`);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error in smart media delete:', error);
+      return false;
+    }
+  };
+
+  // Get count of events using this media
+  const getMediaUsageCount = async (mediaUrl: string): Promise<number> => {
+    try {
+      if (!mediaUrl || !mediaUrl.includes('firebasestorage.googleapis.com')) {
+        return 0;
+      }
+
+      const eventsCollection = collection(db, 'events');
+      const [imageQuery, videoQuery] = await Promise.all([
+        getDocs(query(eventsCollection, where('image', '==', mediaUrl))),
+        getDocs(query(eventsCollection, where('video', '==', mediaUrl)))
+      ]);
+
+      return imageQuery.docs.length + videoQuery.docs.length;
+    } catch (error) {
+      console.error('Error getting media usage count:', error);
+      return 0;
+    }
+  };
+
+  // Delete media with smart recurring event handling
+  const deleteMedia = async () => {
+    if (!currentMedia) return;
+
+    try {
+      // Check how many events use this media
+      const usageCount = await getMediaUsageCount(currentMedia);
+      
+      let alertMessage = 'Are you sure you want to delete this media?';
+      if (usageCount > 1) {
+        alertMessage = `This media is used by ${usageCount} events. Deleting it will remove the media from all of them. Continue?`;
+      }
+
+      Alert.alert(
+        'Delete Media',
+        alertMessage,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const wasDeleted = await smartDeleteMedia(currentMedia);
+                onMediaDeleted?.(); // Always clear from current form
+                
+                if (wasDeleted) {
+                  console.log('✅ Media deleted from Firebase Storage');
+                } else {
+                  console.log('ℹ️ Media kept in Firebase (used by other events)');
+                }
+              } catch (error) {
+                console.error('Error deleting media:', error);
+                onUploadError?.('Failed to delete media. Please try again.');
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error checking media usage:', error);
+      // Fallback to simple delete if usage check fails
+      Alert.alert(
+        'Delete Media',
+        'Are you sure you want to delete this media?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await smartDeleteMedia(currentMedia);
+                onMediaDeleted?.();
+              } catch (deleteError) {
+                console.error('Error deleting media:', deleteError);
+                onUploadError?.('Failed to delete media. Please try again.');
+              }
+            }
+          }
+        ]
+      );
+    }
+  };
+
+  // Upload function - Enhanced to delete old media when replacing
   const uploadMedia = async (uri: string) => {
     try {
       onUploadStart?.();
       
+      // Smart delete old media when replacing
+      if (currentMedia && currentMedia.includes('firebasestorage.googleapis.com')) {
+        try {
+          console.log('🔄 Replacing media - checking if safe to delete old file...');
+          const wasDeleted = await smartDeleteMedia(currentMedia);
+          if (wasDeleted) {
+            console.log('✅ Old media deleted from Firebase Storage');
+          } else {
+            console.log('ℹ️ Old media kept in Firebase (used by other events)');
+          }
+        } catch (deleteError) {
+          console.warn('⚠️ Could not delete old media:', deleteError);
+        }
+      }
+      
       const ext = uri.split('.').pop() || (isVideo(uri) ? 'mp4' : 'jpg');
       const filename = `event_${Date.now()}.${ext}`;
       
-      // Call uploadToFirebaseStorage with the progress callback
-      const url = await uploadToFirebaseStorage(
-        uri, 
-        filename,
-        onUploadProgress
-      );
+      // Upload using the 2-parameter function signature
+      const url = await uploadToFirebaseStorage(uri, filename);
+      
+      // Simulate progress for UI feedback
+      onUploadProgress?.(100);
       
       onUploadComplete?.(url);
       onMediaSelected(url);
@@ -98,12 +235,14 @@ export default function MediaPicker({
         return;
       }
 
-      // Determine media types based on prop
-      let mediaTypes = ImagePicker.MediaTypeOptions.All;
+      // Determine media types based on prop - FIXED: Use correct API
+      let mediaTypes;
       if (type === 'image') {
         mediaTypes = ImagePicker.MediaTypeOptions.Images;
       } else if (type === 'video') {
         mediaTypes = ImagePicker.MediaTypeOptions.Videos;
+      } else {
+        mediaTypes = ImagePicker.MediaTypeOptions.All;
       }
       
       // Launch image picker
@@ -136,7 +275,7 @@ export default function MediaPicker({
           return;
         }
         
-        // Upload the media
+        // Upload the media (this will also delete old media if replacing)
         await uploadMedia(asset.uri);
       }
     } catch (error) {
@@ -165,14 +304,32 @@ export default function MediaPicker({
 
   return (
     <View style={styles.container}>
-      {/* Media Preview */}
+      {/* Media Preview with Delete Button */}
       {currentMedia && (
         <View style={styles.mediaPreview}>
-          {isImage(currentMedia) ? (
-            <Image source={{ uri: currentMedia }} style={styles.previewImage} />
-          ) : isVideo(currentMedia) ? (
-            <Image source={{ uri: currentMedia }} style={styles.previewImage} />
-          ) : null}
+          <View style={styles.imageContainer}>
+            {isImage(currentMedia) ? (
+              <Image source={{ uri: currentMedia }} style={styles.previewImage} />
+            ) : isVideo(currentMedia) ? (
+              <View style={styles.videoPreview}>
+                <Image source={{ uri: currentMedia }} style={styles.previewImage} />
+                <View style={styles.videoOverlay}>
+                  <Ionicons name="play-circle" size={32} color="rgba(255,255,255,0.8)" />
+                </View>
+              </View>
+            ) : null}
+            
+            {/* Delete Button - NEW */}
+            {showDeleteButton && (
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={deleteMedia}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close-circle" size={24} color="#ff4444" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       )}
       
@@ -195,11 +352,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  imageContainer: {
+    position: 'relative',
+  },
   previewImage: {
     width: 120,
     height: 120,
     borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  videoPreview: {
+    position: 'relative',
+  },
+  videoOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 12,
+  },
+  deleteButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderRadius: 12,
+    zIndex: 10,
   },
   pickerButton: {
     backgroundColor: 'rgba(255,255,255,0.2)',
